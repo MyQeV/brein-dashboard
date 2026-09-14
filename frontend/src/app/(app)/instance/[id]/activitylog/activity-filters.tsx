@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CONTROL_HEIGHT } from "@/components/ui/control";
 
 type Filters = {
   min_date: string;
@@ -56,7 +57,7 @@ export function ActivityFilters({
             type="date"
             value={filters.min_date}
             onChange={(event) => set("min_date", event.target.value)}
-            className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
@@ -65,7 +66,7 @@ export function ActivityFilters({
             type="date"
             value={filters.max_date}
             onChange={(event) => set("max_date", event.target.value)}
-            className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
@@ -73,7 +74,7 @@ export function ActivityFilters({
           <select
             value={filters.user_id}
             onChange={(event) => set("user_id", event.target.value)}
-            className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           >
             <option value="">All users</option>
             {users.map((user) => (
@@ -88,7 +89,7 @@ export function ActivityFilters({
           <select
             value={filters.type}
             onChange={(event) => set("type", event.target.value)}
-            className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           >
             <option value="">All types</option>
             {types.map((entry) => (

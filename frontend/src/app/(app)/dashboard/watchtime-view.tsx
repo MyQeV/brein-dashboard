@@ -177,7 +177,7 @@ export function WatchtimeView({
       </div>
 
       {/* Row 2: the other headline numbers. Each opens its breakdown, as before. */}
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-4">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-4">
         <StatTile
           label="Plays"
           value={formatCount(metrics.total_plays)}

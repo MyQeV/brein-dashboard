@@ -24,6 +24,10 @@ ImageAuth = Annotated[User | None, Depends(web_auth.get_current_user_or_image_si
 IMAGE_CACHE_TTL = 300
 
 _HEX_RE = re.compile(r"^[0-9a-fA-F]{1,64}$")
+# Emby and Jellyfin image tags are "<md5>_<ticks>", not bare hex; the tag is
+# only ever forwarded as a query parameter, so the underscore and digits are
+# harmless — rejecting them 400'd every movie and Live TV poster.
+_TAG_RE = re.compile(r"^[0-9a-fA-F]{1,64}(_[0-9]{1,20})?$")
 _VALID_IMAGE_TYPES = frozenset(
     {
         "Primary",
@@ -55,7 +59,7 @@ async def api_instance_image(
     """Proxy Emby item/user image so the browser does not need the API key. Responses are cached."""
     if not _HEX_RE.match(item_id):
         raise HTTPException(status_code=400, detail="Invalid item_id")
-    if tag and not _HEX_RE.match(tag):
+    if tag and not _TAG_RE.match(tag):
         raise HTTPException(status_code=400, detail="Invalid tag")
     if type not in _VALID_IMAGE_TYPES:
         raise HTTPException(status_code=400, detail="Invalid image type")

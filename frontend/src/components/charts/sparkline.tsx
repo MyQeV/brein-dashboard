@@ -7,6 +7,7 @@ export function Sparkline({
   width = 88,
   height = 28,
   area = false,
+  stretch = false,
   className,
 }: {
   values: number[];
@@ -14,6 +15,8 @@ export function Sparkline({
   height?: number;
   /** Fill under the line at 10% — the hero tile's treatment. */
   area?: boolean;
+  /** Fill the box the className sizes; the stroke and dot stay 2px/4px. */
+  stretch?: boolean;
   className?: string;
 }) {
   if (values.length < 2) return null;
@@ -37,6 +40,7 @@ export function Sparkline({
       width={width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio={stretch ? "none" : undefined}
       fill="none"
       aria-hidden="true"
       className={className}
@@ -48,6 +52,7 @@ export function Sparkline({
           d={`M0 ${height} ${path} L${width} ${height} Z`}
           fill="var(--accent)"
           fillOpacity="0.1"
+          vectorEffect={stretch ? "non-scaling-stroke" : undefined}
         />
       )}
       <polyline
@@ -56,14 +61,21 @@ export function Sparkline({
         strokeWidth="2"
         strokeLinejoin="round"
         strokeLinecap="round"
+        vectorEffect={stretch ? "non-scaling-stroke" : undefined}
       />
-      <circle
-        cx={last.x}
-        cy={last.y}
-        r="4"
-        fill="var(--accent)"
+      <path
+        d={`M${last.x.toFixed(1)} ${last.y.toFixed(1)}h0.01`}
         stroke="var(--surface)"
-        strokeWidth="2"
+        strokeWidth="10"
+        strokeLinecap="round"
+        vectorEffect={stretch ? "non-scaling-stroke" : undefined}
+      />
+      <path
+        d={`M${last.x.toFixed(1)} ${last.y.toFixed(1)}h0.01`}
+        stroke="var(--accent)"
+        strokeWidth="6"
+        strokeLinecap="round"
+        vectorEffect={stretch ? "non-scaling-stroke" : undefined}
       />
     </svg>
   );

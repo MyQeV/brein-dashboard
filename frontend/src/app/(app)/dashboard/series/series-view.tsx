@@ -10,7 +10,7 @@ export function SeriesView({ metrics, query }: { metrics: MediaMetrics; query: s
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-3">
         <StatTile
           label="Series watched"
           value={formatCount(metrics.total_watched_series)}

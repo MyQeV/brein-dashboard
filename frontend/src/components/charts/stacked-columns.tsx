@@ -149,21 +149,31 @@ export function StackedColumns({
           dense ? "w-max gap-px" : "gap-2",
         )}
       >
-        {stacks.map((stack, index) => (
-          <span
-            key={stack.date}
-            className={cn(
-              "text-[11px] tabular-nums text-muted",
-              dense
-                ? "shrink-0 overflow-visible whitespace-nowrap text-left"
-                : "min-w-0 flex-1 truncate text-center",
-              selected?.date === stack.date && "text-text",
-            )}
-            style={dense ? { width: DENSE_COLUMN_PX } : undefined}
-          >
-            {index % labelStride === 0 ? dayLabel(stack.date) : ""}
-          </span>
-        ))}
+        {stacks.map((stack, index) => {
+          const label = index % labelStride === 0 ? dayLabel(stack.date) : "";
+          return (
+            <span
+              key={stack.date}
+              className={cn(
+                "text-[11px] tabular-nums text-muted",
+                dense
+                  ? "shrink-0 overflow-visible whitespace-nowrap text-left"
+                  : "min-w-0 flex-1 truncate text-center",
+                selected?.date === stack.date && "text-text",
+              )}
+              style={dense ? { width: DENSE_COLUMN_PX } : undefined}
+            >
+              {dense ? (
+                label
+              ) : (
+                <>
+                  <span className="sm:hidden">{label.slice(0, 2)}</span>
+                  <span className="hidden sm:inline">{label}</span>
+                </>
+              )}
+            </span>
+          );
+        })}
       </div>
     </div>
   );

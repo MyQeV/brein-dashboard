@@ -2,6 +2,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 
 /**
  * The dialog shell: portal, backdrop, Escape, and the one width rule.
@@ -40,34 +41,16 @@ export function Modal({
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-        return;
-      }
-      // Keep Tab inside the dialog. The page behind the backdrop is still in
-      // the tab order otherwise, so tabbing past ✕ landed on the nav
-      // underneath, which is unreachable by mouse and confusing by keyboard.
-      if (event.key !== "Tab") return;
-      const dialog = dialogRef.current;
-      if (!dialog) return;
-      const focusable = dialog.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-      if (event.shiftKey && (active === first || !dialog.contains(active))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      }
+      if (event.key === "Escape") onClose();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Keep Tab inside the dialog. The page behind the backdrop is still in the
+  // tab order otherwise, so tabbing past ✕ landed on the nav underneath,
+  // which is unreachable by mouse and confusing by keyboard.
+  useFocusTrap(dialogRef, true);
 
   if (!mounted) return null;
 
@@ -77,7 +60,7 @@ export function Modal({
       // Anchored near the top rather than centred: a centred dialog grows from
       // both edges, so expanding a row jumps the whole thing upwards. This way
       // the top edge holds still and the content only grows downwards.
-      className="fixed inset-0 z-600 flex items-start justify-center overflow-y-auto bg-(--scrim) p-4 pt-[7vh]"
+      className="fixed inset-0 z-600 flex items-start justify-center overflow-y-auto bg-(--scrim) p-2 pt-[4dvh] lg:p-4 lg:pt-[7dvh]"
       role="presentation"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -88,7 +71,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="flex max-h-[85vh] w-full max-w-[min(72rem,92vw)] flex-col rounded-lg border border-border bg-surface shadow-(--shadow-elevated)"
+        className="flex max-h-[92dvh] lg:max-h-[85dvh] w-full max-w-[min(72rem,92vw)] flex-col rounded-lg border border-border bg-surface shadow-(--shadow-elevated)"
       >
         <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
           <div className="flex min-w-0 flex-col gap-0.5">

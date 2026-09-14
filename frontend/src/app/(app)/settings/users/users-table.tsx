@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import { CONTROL_HEIGHT } from "@/components/ui/control";
 import type { AdminUser } from "@/lib/types";
 import { updateUserRole } from "./actions";
 
@@ -83,7 +84,7 @@ export function UsersTable({
                       disabled={isSelf || busy}
                       title={isSelf ? "You cannot change your own role" : undefined}
                       onChange={(event) => change(user, { role: event.target.value })}
-                      className="h-8 rounded-md border border-border bg-bg px-2 text-sm disabled:opacity-50"
+                      className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm disabled:opacity-50`}
                     >
                       {ROLES.map((role) => (
                         <option key={role} value={role}>

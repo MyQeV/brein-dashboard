@@ -74,8 +74,8 @@ export function StatTile({
           </span>
         )}
       </div>
-      <div className="flex items-end justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-2">
+        <div className="flex min-w-0 flex-1 basis-32 flex-col gap-1">
           <span
             className={cn(
               "font-semibold leading-none tabular-nums",
@@ -90,12 +90,25 @@ export function StatTile({
               {deltaLabel && <span className="text-muted"> {deltaLabel}</span>}
             </span>
           )}
-          {hint && <span className="text-xs text-muted">{hint}</span>}
+          {hint && (
+            <span className="truncate text-xs text-muted" title={hint}>
+              {hint}
+            </span>
+          )}
         </div>
-        {sparkline && !hero && <Sparkline values={sparkline} className="shrink-0" />}
+        {sparkline && !hero && (
+          <Sparkline values={sparkline} className="ml-auto shrink-0" />
+        )}
       </div>
       {sparkline && hero && (
-        <Sparkline values={sparkline} width={316} height={44} area className="w-full" />
+        <Sparkline
+          values={sparkline}
+          width={316}
+          height={44}
+          area
+          stretch
+          className="h-11 w-full"
+        />
       )}
     </div>
   );

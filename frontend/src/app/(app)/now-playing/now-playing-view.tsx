@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { CONTROL_HEIGHT } from "@/components/ui/control";
 import { cn } from "@/lib/cn";
 import { formatClock } from "@/lib/format";
 import { type NowPlayingCard, toCard } from "@/lib/now-playing";
@@ -26,7 +27,7 @@ export function NowPlayingView({
   const [elapsedMs, setElapsedMs] = useState(0);
   const receivedAt = useRef<number | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sessions is the trigger, not an input — the clock restarts on every payload
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset the clock whenever a new payload arrives
   useEffect(() => {
     receivedAt.current = Date.now();
     setElapsedMs(0);
@@ -92,7 +93,7 @@ export function NowPlayingView({
               <select
                 value={activeFilter}
                 onChange={(event) => setInstanceFilter(event.target.value)}
-                className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+                className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
               >
                 <option value="all">All</option>
                 {instances.map(([id, label]) => (

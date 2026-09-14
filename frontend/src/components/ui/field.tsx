@@ -1,5 +1,6 @@
 import type { InputHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { CONTROL_HEIGHT } from "./control";
 
 type Props = InputHTMLAttributes<HTMLInputElement> & {
   label: string;
@@ -22,7 +23,8 @@ export function Field({ label, help, error, id, className, ...props }: Props) {
         aria-describedby={cn(helpId, errorId) || undefined}
         aria-invalid={error ? true : undefined}
         className={cn(
-          "h-10 rounded-md border border-border bg-bg px-3 text-sm",
+          CONTROL_HEIGHT.md,
+          "rounded-md border border-border bg-bg px-3 text-sm",
           "placeholder:text-muted focus:border-accent",
           error && "border-error",
           className,

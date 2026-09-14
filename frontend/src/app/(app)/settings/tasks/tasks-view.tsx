@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CONTROL_HEIGHT } from "@/components/ui/control";
 import { cn } from "@/lib/cn";
 import { formatDateTime } from "@/lib/format";
 import type { ScheduledTask } from "@/lib/types";
@@ -60,7 +61,7 @@ function TaskRow({
           disabled={pending}
           onChange={(event) => setIntervalValue(event.target.value)}
           onBlur={commitInterval}
-          className="h-8 w-24 rounded-md border border-border bg-bg px-2 text-sm"
+          className={`${CONTROL_HEIGHT.sm} w-24 rounded-md border border-border bg-bg px-2 text-sm`}
         />
         <span className="ml-2 text-xs text-muted">
           {formatInterval(task.interval_seconds)}

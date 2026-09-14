@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CONTROL_HEIGHT } from "@/components/ui/control";
 import { Spinner } from "@/components/ui/spinner";
 import { clientFetch } from "@/lib/client-fetch";
 
@@ -98,7 +99,7 @@ export function LogViewer() {
           <select
             value={file}
             onChange={(event) => setFile(event.target.value)}
-            className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           >
             {files.map((entry) => (
               <option key={entry.name} value={entry.name}>
@@ -113,7 +114,7 @@ export function LogViewer() {
           <select
             value={level}
             onChange={(event) => setLevel(event.target.value)}
-            className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           >
             {LEVELS.map((option) => (
               <option key={option} value={option}>
@@ -129,7 +130,7 @@ export function LogViewer() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Filter lines…"
-            className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           />
         </label>
 
@@ -148,7 +149,7 @@ export function LogViewer() {
                 Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), MAX_LINES) : 200,
               );
             }}
-            className="h-8 w-24 rounded-md border border-border bg-bg px-2 text-sm"
+            className={`${CONTROL_HEIGHT.sm} w-24 rounded-md border border-border bg-bg px-2 text-sm`}
           />
         </label>
 

@@ -38,7 +38,7 @@ export default async function DailyPage(props: PageProps<"/dashboard/daily">) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
         <div>
           <h1 className="text-lg font-semibold">Daily</h1>
           <p className="text-sm text-muted">
