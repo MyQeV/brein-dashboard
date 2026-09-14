@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CHART_SLOTS, OTHER_COLOR, seriesColor } from "@/components/charts/chart-theme";
+import { OTHER_COLOR, rankColor } from "@/components/charts/chart-theme";
 import { ChartTooltip } from "@/components/charts/chart-tooltip";
 import {
   type Stack,
@@ -117,15 +117,14 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
 
     // Colours follow overall rank, so a user keeps one colour across every
     // day. The top eight take the theme's validated slots; everyone after
-    // that is the "Other" grey — still their own segment, still clickable,
-    // named by the tooltip and the list — because the extended palette that
-    // used to colour them fails every colour-vision check.
+    // that gets a generated hue of their own — one grey for the tail left a
+    // server with thirty viewers showing mostly identical bands.
     const ranked = [...totalsByUser.entries()].sort(
       ([, a], [, b]) => b.seconds - a.seconds,
     );
     const colorByUser = new Map<string, string>();
     ranked.forEach(([key], index) => {
-      colorByUser.set(key, index < CHART_SLOTS ? seriesColor(index) : OTHER_COLOR);
+      colorByUser.set(key, rankColor(index));
     });
 
     const byDay = new Map<string, Row[]>();
@@ -156,9 +155,7 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
     const legend = ranked.map(([key, value], index) => ({
       key,
       name: value.name,
-      color: index < CHART_SLOTS ? seriesColor(index) : OTHER_COLOR,
-      // Past the slots the chip is one grey "N more" entry, not a row each.
-      inPalette: index < CHART_SLOTS,
+      color: rankColor(index),
     }));
 
     return {
@@ -299,8 +296,6 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
 
   const selected =
     "userKey" in detail ? { key: detail.userKey, date: detail.date } : null;
-  const paletteLegend = legend.filter((entry) => entry.inPalette);
-  const tailCount = legend.length - paletteLegend.length;
   const totalSeconds = stacks.reduce((sum, stack) => sum + stack.total, 0);
 
   return (
@@ -355,7 +350,7 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
               <ul className="flex flex-wrap gap-1.5">
-                {paletteLegend.map((entry) => {
+                {legend.map((entry) => {
                   const off = hidden.has(entry.key);
                   return (
                     <li key={entry.key}>
@@ -378,16 +373,6 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
                     </li>
                   );
                 })}
-                {tailCount > 0 && (
-                  <li className="flex items-center gap-1.5 rounded-full bg-surface-2 px-2 py-1 text-xs text-muted">
-                    <span
-                      aria-hidden="true"
-                      className="size-2 rounded-full"
-                      style={{ background: OTHER_COLOR }}
-                    />
-                    {tailCount} more
-                  </li>
-                )}
               </ul>
               <fieldset className="flex gap-1 border-0 p-0">
                 <legend className="sr-only">Show users</legend>
@@ -407,7 +392,10 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
         )}
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_26rem]">
+      {/* The per-user list is three short columns and needs no more than
+          26rem; the titles on the right are what run long, so they get the
+          rest of the row. */}
+      <div className="grid gap-4 lg:grid-cols-[26rem_minmax(0,1fr)]">
         <Card
           title="Per user, per day"
           actions={
@@ -423,7 +411,7 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
               No playback recorded for this range.
             </p>
           ) : (
-            <ul className="max-h-80 overflow-y-auto text-sm">
+            <ul className="max-h-[32rem] overflow-y-auto text-sm">
               {perUserDay.map((row) => {
                 // Compared by key, not display name: two accounts can share a
                 // name, and both rows would then highlight for one fetch.
@@ -512,7 +500,7 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
               <p className="py-4 text-sm text-muted">No sessions recorded that day.</p>
             )}
             {detail.status === "ok" && detail.rows.length > 0 && (
-              <ul className="max-h-80 divide-y divide-border overflow-y-auto text-sm">
+              <ul className="max-h-[32rem] divide-y divide-border overflow-y-auto text-sm">
                 {detail.rows.map((session, index) => {
                   const row = session as Record<string, unknown>;
                   return (
