@@ -1,26 +1,27 @@
-# Brein
+# Brein-dashboard
 
-Centralized dashboard and management hub for your media stack. FastAPI + PostgreSQL
-API on port **8001**, Next.js frontend on port **3100**.
+Centralized dashboard and management hub for your media stack. 
+FastAPI + PostgreSQL API on port **8001**, Next.js frontend on port **3100**.
+
+This is part of my private brein repository that i wanted to set public.
 
 ## What Brein does
 
 ### Dashboard
 Live overview of your Emby, Jellyfin or Plex server: total plays, watch time,
 per-user breakdowns, and recent activity. Stats are cached and refreshed
-periodically. The dashboard respects your configured timezone for date range
-calculations.
+periodically.
 <img width="1690" height="836" alt="image" src="https://github.com/user-attachments/assets/4f75ea5d-b834-4244-8390-f13b15d516c6" />
 <img width="1693" height="301" alt="image" src="https://github.com/user-attachments/assets/d8be9306-c0e2-4b3e-bcff-61726f24f8f4" />
 
 ### Now playing
 Real-time playback state pushed to the UI via WebSocket. Updates every 10
-seconds — no page refresh needed.
+seconds.
 <img width="1901" height="331" alt="image" src="https://github.com/user-attachments/assets/045603c9-4018-4b92-9b18-602d7f7bcd77" />
 
 ### Release calendar (Sonarr/Radarr)
 Unified calendar view of upcoming and recently released content pulled from
-Sonarr and Radarr. See what's in your queue at a glance.
+Sonarr and Radarr.
 <img width="1693" height="869" alt="image" src="https://github.com/user-attachments/assets/52e19db9-8b6d-4cb7-b8c4-ae7e49163493" />
 
 ### Downloads (SABnzbd)
