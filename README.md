@@ -21,6 +21,7 @@ seconds — no page refresh needed.
 ### Release calendar (Sonarr/Radarr)
 Unified calendar view of upcoming and recently released content pulled from
 Sonarr and Radarr. See what's in your queue at a glance.
+<img width="1693" height="869" alt="image" src="https://github.com/user-attachments/assets/52e19db9-8b6d-4cb7-b8c4-ae7e49163493" />
 
 ### Downloads (SABnzbd)
 Queue and history views for SABnzbd, with per-item pause/resume/delete and
