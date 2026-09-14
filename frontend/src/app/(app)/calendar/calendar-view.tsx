@@ -67,6 +67,21 @@ function gridDays(month: Date): string[] {
 
 const WEEKDAY_HEADS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/** "Wed 2 Sep" — the agenda's day heading, read in UTC like the grid. */
+function dayHeading(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
+}
+
+/** A stable key for an entry within its day. */
+function eventKey(event: CalendarEvent): string {
+  return `${event.source}-${event.instance_id}-${event.title}-${event.subtitle ?? ""}`;
+}
+
 /**
  * Where a calendar entry opens: the series or film in the app that manages it.
  *
@@ -86,6 +101,23 @@ function eventUrl(event: CalendarEvent): string | undefined {
     return `${base}/movie/${encodeURIComponent(String(event.tmdb_id))}`;
   }
   return undefined;
+}
+
+/** The title as a link into Sonarr/Radarr when the entry has one, plain text otherwise. */
+function EventTitle({ event, className }: { event: CalendarEvent; className?: string }) {
+  const href = eventUrl(event);
+  return href ? (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn("hover:text-accent hover:underline", className)}
+    >
+      {event.title}
+    </a>
+  ) : (
+    <span className={className}>{event.title}</span>
+  );
 }
 
 export function CalendarView() {
@@ -193,18 +225,34 @@ export function CalendarView() {
 
   const days = month ? gridDays(month) : [];
   const currentMonth = month ? month.getUTCMonth() : -1;
+  // Today stays in the agenda even with nothing on it: the day the user is
+  // orienting by must not simply be missing from the list.
+  const agendaDays = days.filter(
+    (day) =>
+      Number(day.slice(5, 7)) - 1 === currentMonth && (byDate.has(day) || day === today),
+  );
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" onClick={() => shiftMonth(-1)}>
-          Previous
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-label="Previous month"
+          onClick={() => shiftMonth(-1)}
+        >
+          ‹
         </Button>
-        <span className="min-w-40 text-center text-sm font-medium">
+        <span className="min-w-36 text-center text-sm font-medium">
           {month ? monthLabel(month) : " "}
         </span>
-        <Button size="sm" variant="secondary" onClick={() => shiftMonth(1)}>
-          Next
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-label="Next month"
+          onClick={() => shiftMonth(1)}
+        >
+          ›
         </Button>
 
         <fieldset className="ml-auto flex gap-1 border-0 p-0">
@@ -232,8 +280,70 @@ export function CalendarView() {
         </p>
       )}
 
+      {/* Below md the month is an agenda: the seven-column grid needs 640px
+          and on a phone scrolled sideways with four columns showing and
+          every title chopped. Only days with entries are listed. */}
       {state.status === "ok" && month && (
-        <div className="overflow-x-auto">
+        <div className="md:hidden">
+          {agendaDays.length === 0 ? (
+            <p className="py-6 text-sm text-muted">
+              Nothing scheduled in {monthLabel(month)}.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {agendaDays.map((day) => {
+                const isToday = day === today;
+                return (
+                  <li key={day}>
+                    <h3
+                      className={cn(
+                        "sticky top-0 rounded-sm px-2 py-1.5 text-sm font-semibold",
+                        isToday ? "bg-accent text-accent-ink" : "bg-surface-2",
+                      )}
+                    >
+                      {dayHeading(day)}
+                      {isToday && <span className="ml-2 text-xs font-normal">Today</span>}
+                    </h3>
+                    {isToday && !byDate.has(day) && (
+                      <p className="px-2 py-2 text-sm text-muted">Nothing scheduled.</p>
+                    )}
+                    <ul className="divide-y divide-border">
+                      {(byDate.get(day) ?? []).map((event) => (
+                        <li
+                          key={eventKey(event)}
+                          className="flex items-start gap-2 px-2 py-2"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              "mt-1.5 size-2 shrink-0 rounded-full",
+                              STATUS_DOT[statusOf(event)],
+                            )}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <EventTitle event={event} className="block text-sm" />
+                            {event.subtitle && (
+                              <span className="block text-xs text-muted">
+                                {event.subtitle}
+                              </span>
+                            )}
+                          </span>
+                          <span className="shrink-0 text-xs text-muted capitalize">
+                            {event.source}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {state.status === "ok" && month && (
+        <div className="hidden overflow-x-auto md:block">
           <div className="grid min-w-160 grid-cols-7 gap-px rounded-lg border border-border bg-border">
             {WEEKDAY_HEADS.map((head) => (
               <div
@@ -255,21 +365,24 @@ export function CalendarView() {
                   className={cn(
                     "min-h-24 bg-surface p-1 align-top",
                     outside && "opacity-40",
-                    isToday && "ring-1 ring-accent ring-inset",
+                    isToday && "bg-accent/10 ring-2 ring-accent ring-inset",
                   )}
                 >
-                  <div
-                    className={cn(
-                      "mb-1 text-right text-xs tabular-nums",
-                      isToday ? "font-semibold text-accent" : "text-muted",
-                    )}
-                  >
-                    {Number(day.slice(8, 10))}
+                  <div className="mb-1 flex justify-end text-xs tabular-nums">
+                    <span
+                      className={cn(
+                        isToday
+                          ? "inline-flex size-5 items-center justify-center rounded-full bg-accent font-semibold text-accent-ink"
+                          : "text-muted",
+                      )}
+                    >
+                      {Number(day.slice(8, 10))}
+                    </span>
                   </div>
                   <ul className="flex flex-col gap-0.5">
                     {events.map((event) => (
                       <li
-                        key={`${event.source}-${event.instance_id}-${event.title}-${event.subtitle ?? ""}`}
+                        key={eventKey(event)}
                         className="flex items-center gap-1"
                         title={`${event.title}${event.subtitle ? ` — ${event.subtitle}` : ""}`}
                       >
@@ -280,18 +393,7 @@ export function CalendarView() {
                             STATUS_DOT[statusOf(event)],
                           )}
                         />
-                        {eventUrl(event) ? (
-                          <a
-                            href={eventUrl(event)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="truncate text-[11px] hover:text-accent hover:underline"
-                          >
-                            {event.title}
-                          </a>
-                        ) : (
-                          <span className="truncate text-[11px]">{event.title}</span>
-                        )}
+                        <EventTitle event={event} className="truncate text-[11px]" />
                       </li>
                     ))}
                   </ul>
