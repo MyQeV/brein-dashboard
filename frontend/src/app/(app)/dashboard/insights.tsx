@@ -54,6 +54,7 @@ export function ConcurrencyTile({ query }: { query: string }) {
           ? state.data.per_day.map((row) => row.peak)
           : undefined
       }
+      wideSparkline
     />
   );
 }
