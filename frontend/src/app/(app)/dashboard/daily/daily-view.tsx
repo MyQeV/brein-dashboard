@@ -8,6 +8,7 @@ import {
   StackedColumns,
   type StackSegment,
 } from "@/components/charts/stacked-columns";
+import { type SessionRow, sessionTitle } from "@/components/sessions-by-day";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
@@ -514,7 +515,7 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
                       </span>
                       <span className="min-w-0">
                         <span className="block truncate">
-                          {rowText(row, ["title"], "—")}
+                          {sessionTitle(session as SessionRow)}
                         </span>
                         <span className="block text-[11px] text-muted">
                           {rowText(row, ["item_type"], "")}
