@@ -8,7 +8,7 @@ import {
   StackedColumns,
   type StackSegment,
 } from "@/components/charts/stacked-columns";
-import { type SessionRow, sessionTitle } from "@/components/sessions-by-day";
+import { type SessionRow, sessionTitle, weekdayName } from "@/components/sessions-by-day";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
@@ -405,9 +405,16 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
             <ul className="max-h-[32rem] overflow-y-auto text-sm">
               {stacks.map((stack) => (
                 <li key={stack.date}>
-                  <div className="sticky top-0 flex items-baseline justify-between bg-surface px-2 pt-2 pb-1 text-xs text-muted">
-                    <span className="tabular-nums">{dayLabel(stack.date)}</span>
-                    <span className="tabular-nums">{formatDuration(stack.total)}</span>
+                  <div className="sticky top-0 mt-2 flex items-baseline justify-between rounded-sm bg-surface-2 px-2 py-1.5 first:mt-0">
+                    <span className="font-semibold">
+                      {weekdayName(stack.date)}{" "}
+                      <span className="font-normal text-muted tabular-nums">
+                        {stack.date.slice(5)}
+                      </span>
+                    </span>
+                    <span className="text-xs text-muted tabular-nums">
+                      {formatDuration(stack.total)}
+                    </span>
                   </div>
                   <ul>
                     {stack.segments.map((segment) => {
