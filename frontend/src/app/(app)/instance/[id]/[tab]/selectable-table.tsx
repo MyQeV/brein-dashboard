@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import { CARD_TABLE } from "@/components/ui/table";
 import { type ArrColumn, type ArrTab, renderArrCell } from "@/lib/arr-tabs";
 import { cn } from "@/lib/cn";
 import { type ActionResult, bulkDeleteRows } from "./actions";
@@ -111,92 +112,96 @@ export function SelectableArrTable({
         )}
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-border text-left">
-              <th scope="col" className="w-8 py-2 pl-3 pr-1">
-                <input
-                  type="checkbox"
-                  aria-label={allSelected ? "Deselect all rows" : "Select all rows"}
-                  checked={allSelected}
-                  onChange={toggleAll}
-                  disabled={selectable.length === 0}
-                />
+      {/* On a phone the row is a card: the checkbox and the title share its
+          first line, the other columns are labelled under them. */}
+      <table className={CARD_TABLE.table}>
+        <thead className={CARD_TABLE.thead}>
+          <tr className="border-b border-border text-left">
+            <th scope="col" className="w-8 py-2 pl-3 pr-1">
+              <input
+                type="checkbox"
+                aria-label={allSelected ? "Deselect all rows" : "Select all rows"}
+                checked={allSelected}
+                onChange={toggleAll}
+                disabled={selectable.length === 0}
+              />
+            </th>
+            {columns.map((column) => (
+              <th
+                key={column.key}
+                scope="col"
+                className={cn(
+                  "px-3 py-2 font-medium text-muted",
+                  column.align === "right" && "text-right",
+                )}
+              >
+                {column.header}
               </th>
-              {columns.map((column) => (
-                <th
-                  key={column.key}
-                  scope="col"
-                  className={cn(
-                    "px-3 py-2 font-medium text-muted",
-                    column.align === "right" && "text-right",
-                  )}
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => {
+            const id = typeof row.id === "number" ? row.id : null;
+            const checked = id !== null && selected.has(id);
+            return (
+              <tr
+                key={String(row.id ?? index)}
+                // The whole row toggles: a 6px checkbox is a small target in
+                // a table this wide. The checkbox inside stays the keyboard
+                // path and carries the state, as the drill-down rows do.
+                onClick={() => {
+                  if (id === null) return;
+                  // Dragging across a title to copy it should not also
+                  // select the row.
+                  if (window.getSelection()?.toString()) return;
+                  toggle(id);
+                }}
+                className={cn(
+                  CARD_TABLE.row,
+                  "last:border-0 max-lg:flex-row max-lg:flex-wrap max-lg:gap-x-3",
+                  id !== null && "cursor-pointer hover:bg-border/30",
+                  checked && "bg-accent/10",
+                )}
+              >
+                {/* biome-ignore lint/a11y/useKeyWithClickEvents: the handler only keeps the click from reaching the row; the checkbox inside is the keyboard path */}
+                <td
+                  className="py-2 pl-3 pr-1 max-lg:p-0"
+                  // The row handles the click too; without this the
+                  // checkbox would toggle and then untoggle.
+                  onClick={(event) => event.stopPropagation()}
                 >
-                  {column.header}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => {
-              const id = typeof row.id === "number" ? row.id : null;
-              const checked = id !== null && selected.has(id);
-              return (
-                <tr
-                  key={String(row.id ?? index)}
-                  // The whole row toggles: a 6px checkbox is a small target in
-                  // a table this wide. The checkbox inside stays the keyboard
-                  // path and carries the state, as the drill-down rows do.
-                  onClick={() => {
-                    if (id === null) return;
-                    // Dragging across a title to copy it should not also
-                    // select the row.
-                    if (window.getSelection()?.toString()) return;
-                    toggle(id);
-                  }}
-                  className={cn(
-                    "border-b border-border last:border-0",
-                    id !== null && "cursor-pointer hover:bg-border/30",
-                    checked && "bg-accent/10",
-                  )}
-                >
-                  {/* biome-ignore lint/a11y/useKeyWithClickEvents: the handler only keeps the click from reaching the row; the checkbox inside is the keyboard path */}
+                  <input
+                    type="checkbox"
+                    // Every *arr list row carries an upstream id; the guard
+                    // is for the one that somehow does not, which cannot be
+                    // part of the request either way.
+                    disabled={id === null}
+                    checked={checked}
+                    onChange={() => id !== null && toggle(id)}
+                    aria-label={`Select ${renderArrCell(row, columns[0])}`}
+                    className="cursor-pointer"
+                  />
+                </td>
+                {columns.map((column, index) => (
                   <td
-                    className="py-2 pl-3 pr-1"
-                    // The row handles the click too; without this the
-                    // checkbox would toggle and then untoggle.
-                    onClick={(event) => event.stopPropagation()}
+                    key={column.key}
+                    data-label={column.header}
+                    className={cn(
+                      index === 0
+                        ? cn(CARD_TABLE.lead, "max-lg:min-w-0 max-lg:flex-1")
+                        : cn(CARD_TABLE.cell, "max-lg:w-full"),
+                      column.align === "right" && "text-right tabular-nums",
+                    )}
                   >
-                    <input
-                      type="checkbox"
-                      // Every *arr list row carries an upstream id; the guard
-                      // is for the one that somehow does not, which cannot be
-                      // part of the request either way.
-                      disabled={id === null}
-                      checked={checked}
-                      onChange={() => id !== null && toggle(id)}
-                      aria-label={`Select ${renderArrCell(row, columns[0])}`}
-                      className="cursor-pointer"
-                    />
+                    {renderArrCell(row, column)}
                   </td>
-                  {columns.map((column) => (
-                    <td
-                      key={column.key}
-                      className={cn(
-                        "px-3 py-2",
-                        column.align === "right" && "text-right tabular-nums",
-                      )}
-                    >
-                      {renderArrCell(row, column)}
-                    </td>
-                  ))}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

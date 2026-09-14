@@ -24,6 +24,8 @@ const TODAY_BY_DEFAULT = new Set([
 /** The floor the old dashboard sent for "All"; predates any playback data. */
 const ALL_START_DATE = "2000-01-01";
 
+const DATE_INPUT = `${CONTROL_HEIGHT.sm} min-w-0 flex-1 rounded-md border border-border bg-surface px-2 text-sm max-lg:px-1 max-lg:[&::-webkit-calendar-picker-indicator]:hidden lg:flex-none`;
+
 function isoDaysBefore(endDate: string, days: number): string {
   const end = new Date(`${endDate}T00:00:00Z`);
   const start = new Date(end);
@@ -126,41 +128,49 @@ export function DateRange({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button
-        size="sm"
-        variant="secondary"
-        aria-label="Previous period"
-        onClick={() => shiftPeriod(-1)}
-      >
-        ‹
-      </Button>
+      {/* One row on a phone too: the two dates share whatever width is
+          left between the arrows, rather than the row breaking after the
+          dash with the end date and › on a line of their own. That takes
+          dropping the dash and the picker icon there — tapping the field
+          opens the picker anyway. */}
+      <div className="flex w-full items-center gap-2 lg:w-auto">
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-label="Previous period"
+          onClick={() => shiftPeriod(-1)}
+        >
+          ‹
+        </Button>
 
-      <input
-        type="date"
-        aria-label="Start date"
-        value={startDate}
-        onChange={(event) => push({ start_date: event.target.value, days: undefined })}
-        className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-surface px-2 text-sm`}
-      />
-      <span className="text-muted">–</span>
-      <input
-        type="date"
-        aria-label="End date"
-        value={endDate}
-        onChange={(event) => push({ end_date: event.target.value, days: undefined })}
-        className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-surface px-2 text-sm`}
-      />
+        <input
+          type="date"
+          aria-label="Start date"
+          value={startDate}
+          onChange={(event) => push({ start_date: event.target.value, days: undefined })}
+          className={DATE_INPUT}
+        />
+        <span className="text-muted max-lg:hidden">–</span>
+        <input
+          type="date"
+          aria-label="End date"
+          value={endDate}
+          onChange={(event) => push({ end_date: event.target.value, days: undefined })}
+          className={DATE_INPUT}
+        />
 
-      <Button
-        size="sm"
-        variant="secondary"
-        aria-label="Next period"
-        onClick={() => shiftPeriod(1)}
-      >
-        ›
-      </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-label="Next period"
+          onClick={() => shiftPeriod(1)}
+        >
+          ›
+        </Button>
+      </div>
 
-      <fieldset className="flex gap-1 border-0 p-0">
+      {/* The six presets fill a row of their own on a phone. */}
+      <fieldset className="flex w-full gap-1 border-0 p-0 lg:w-auto">
         <legend className="sr-only">Date range presets</legend>
         {PRESETS.map((preset) => (
           <Button
@@ -169,6 +179,7 @@ export function DateRange({
             variant={active === String(preset.days) ? "primary" : "ghost"}
             aria-pressed={active === String(preset.days)}
             onClick={() => applyPreset(preset.days)}
+            className="flex-1 max-lg:px-2 lg:flex-none"
           >
             {preset.label}
           </Button>

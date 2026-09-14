@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { CARD_TABLE } from "@/components/ui/table";
 import { cn } from "@/lib/cn";
 import type { MediaLibrary, MediaUser } from "@/lib/types";
 import { UserEditModal } from "./user-modal";
@@ -123,99 +124,120 @@ export function UsersTable({
     return <p className="py-6 text-sm text-muted">This server has no users.</p>;
   }
 
+  function sortButton(column: (typeof COLUMNS)[number], className: string) {
+    const active = sort.key === column.key;
+    return (
+      <button
+        type="button"
+        onClick={() => toggleSort(column.key)}
+        className={cn("cursor-pointer hover:text-text", className)}
+      >
+        {column.header}
+        {active && <span aria-hidden="true">{sort.dir === "desc" ? " ↓" : " ↑"}</span>}
+      </button>
+    );
+  }
+
   return (
     <>
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-border text-left">
-              {COLUMNS.map((column) => {
-                const active = sort.key === column.key;
-                return (
-                  <th
-                    key={column.key}
-                    scope="col"
-                    aria-sort={
-                      active ? (sort.dir === "desc" ? "descending" : "ascending") : "none"
-                    }
-                    className={cn(
-                      "px-3 py-2 font-medium text-muted",
-                      column.align === "right" && "text-right",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => toggleSort(column.key)}
-                      className="cursor-pointer hover:text-text"
-                    >
-                      {column.header}
-                      {active && (
-                        <span aria-hidden="true">
-                          {sort.dir === "desc" ? " ↓" : " ↑"}
-                        </span>
-                      )}
-                    </button>
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((row) => (
-              <tr
-                key={row.id}
-                onClick={() => {
-                  if (!canEdit) return;
-                  // Dragging across a name to copy it should not also open
-                  // the dialog, as on the *arr tables.
-                  if (window.getSelection()?.toString()) return;
-                  setEditing(row);
-                }}
-                className={cn(
-                  "border-b border-border last:border-0",
-                  canEdit && "cursor-pointer hover:bg-border/30",
-                )}
-              >
-                <td className="px-3 py-2">
-                  {canEdit ? (
-                    // The row carries the click; this is the keyboard path to
-                    // the same dialog.
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setEditing(row);
-                      }}
-                      className="cursor-pointer text-left hover:text-accent"
-                    >
-                      {row.name}
-                    </button>
-                  ) : (
-                    row.name
-                  )}
-                </td>
-                <td className="px-3 py-2">
-                  <span className={row.is_disabled ? "text-muted" : "text-success"}>
-                    {row.is_disabled ? "Disabled" : "Enabled"}
-                  </span>
-                </td>
-                <td className="px-3 py-2">
-                  {row.is_administrator ? "Administrator" : "User"}
-                </td>
-                <td className="px-3 py-2">{librariesLabel(row)}</td>
-                <td className="px-3 py-2 text-right tabular-nums">
-                  {row.max_simultaneous_streams > 0
-                    ? String(row.max_simultaneous_streams)
-                    : "Unlimited"}
-                </td>
-                <td className="px-3 py-2">
-                  {formatDate(row.last_activity_date, timeZone)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* The cards hide the header row, and with it the sort buttons; this
+          strip is where sorting lives on a phone. */}
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs lg:hidden">
+        <span className="text-muted">Sort by</span>
+        {COLUMNS.map((column) =>
+          sortButton(
+            column,
+            sort.key === column.key ? "font-medium text-text" : "text-muted",
+          ),
+        )}
       </div>
+      <table className={CARD_TABLE.table}>
+        <thead className={CARD_TABLE.thead}>
+          <tr className="border-b border-border text-left">
+            {COLUMNS.map((column) => {
+              const active = sort.key === column.key;
+              return (
+                <th
+                  key={column.key}
+                  scope="col"
+                  aria-sort={
+                    active ? (sort.dir === "desc" ? "descending" : "ascending") : "none"
+                  }
+                  className={cn(
+                    "px-3 py-2 font-medium text-muted",
+                    column.align === "right" && "text-right",
+                  )}
+                >
+                  {sortButton(column, "")}
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody className={CARD_TABLE.tbody}>
+          {sorted.map((row) => (
+            <tr
+              key={row.id}
+              onClick={() => {
+                if (!canEdit) return;
+                // Dragging across a name to copy it should not also open
+                // the dialog, as on the *arr tables.
+                if (window.getSelection()?.toString()) return;
+                setEditing(row);
+              }}
+              className={cn(
+                CARD_TABLE.row,
+                "last:border-0",
+                canEdit && "cursor-pointer hover:bg-border/30",
+              )}
+            >
+              <td className={CARD_TABLE.lead}>
+                {canEdit ? (
+                  // The row carries the click; this is the keyboard path to
+                  // the same dialog.
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setEditing(row);
+                    }}
+                    className="cursor-pointer text-left hover:text-accent"
+                  >
+                    {row.name}
+                  </button>
+                ) : (
+                  row.name
+                )}
+              </td>
+              <td data-label="State" className={CARD_TABLE.cell}>
+                <span className={row.is_disabled ? "text-muted" : "text-success"}>
+                  {row.is_disabled ? "Disabled" : "Enabled"}
+                </span>
+              </td>
+              <td data-label="Role" className={CARD_TABLE.cell}>
+                {row.is_administrator ? "Administrator" : "User"}
+              </td>
+              <td
+                data-label="Libraries"
+                className={cn(CARD_TABLE.cell, "max-lg:text-right")}
+              >
+                {librariesLabel(row)}
+              </td>
+              <td
+                data-label="Streams"
+                className={cn(CARD_TABLE.cell, "text-right tabular-nums")}
+              >
+                {row.max_simultaneous_streams > 0
+                  ? String(row.max_simultaneous_streams)
+                  : "Unlimited"}
+              </td>
+              <td data-label="Last active" className={CARD_TABLE.cell}>
+                {formatDate(row.last_activity_date, timeZone)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       {editing && (
         <UserEditModal

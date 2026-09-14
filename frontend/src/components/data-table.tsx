@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { CARD_TABLE } from "@/components/ui/table";
 import { cn } from "@/lib/cn";
 
 export type Column<Row> = {
@@ -25,6 +26,7 @@ export function DataTable<Row extends Record<string, unknown>>({
   sortDir,
   rowKey,
   empty = "Nothing to show.",
+  cards = false,
 }: {
   rows: Row[];
   columns: Column<Row>[];
@@ -34,6 +36,13 @@ export function DataTable<Row extends Record<string, unknown>>({
   sortDir?: "asc" | "desc";
   rowKey: (row: Row, index: number) => string;
   empty?: ReactNode;
+  /**
+   * Below `lg`, one card per row instead of a table that scrolls sideways:
+   * the first column as the card's heading, the rest as labelled lines. For
+   * a table with more columns than a phone has room for; a narrow one reads
+   * better as it is.
+   */
+  cards?: boolean;
 }) {
   if (rows.length === 0) {
     return <p className="py-6 text-sm text-muted">{empty}</p>;
@@ -50,10 +59,39 @@ export function DataTable<Row extends Record<string, unknown>>({
     return `${basePath}?${params.toString()}`;
   }
 
+  function sortMark(column: string): ReactNode {
+    if (sortBy !== column) return null;
+    return <span aria-hidden="true">{sortDir === "desc" ? " ↓" : " ↑"}</span>;
+  }
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-sm">
-        <thead>
+    <div className={cn(!cards && "overflow-x-auto")}>
+      {/* The cards hide the header row, and with it the sort links; this
+          strip is where sorting lives on a phone. */}
+      {cards && basePath && (
+        <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs lg:hidden">
+          <span className="text-muted">Sort by</span>
+          {columns.map((column) => {
+            const href = headerHref(column.key);
+            if (!href || !column.header) return null;
+            return (
+              <Link
+                key={column.key}
+                href={href}
+                className={cn(
+                  "hover:text-text",
+                  sortBy === column.key ? "font-medium text-text" : "text-muted",
+                )}
+              >
+                {column.header}
+                {sortMark(column.key)}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+      <table className={cn("w-full border-collapse text-sm", cards && CARD_TABLE.table)}>
+        <thead className={cn(cards && CARD_TABLE.thead)}>
           <tr className="border-b border-border text-left">
             {columns.map((column) => {
               const active = sortBy === column.key;
@@ -75,9 +113,7 @@ export function DataTable<Row extends Record<string, unknown>>({
                     // keyboard reachable and shareable as a URL.
                     <Link href={href} className="hover:text-text">
                       {column.header}
-                      {active && (
-                        <span aria-hidden="true">{sortDir === "desc" ? " ↓" : " ↑"}</span>
-                      )}
+                      {sortMark(column.key)}
                     </Link>
                   ) : (
                     column.header
@@ -87,14 +123,24 @@ export function DataTable<Row extends Record<string, unknown>>({
             })}
           </tr>
         </thead>
-        <tbody>
+        <tbody className={cn(cards && CARD_TABLE.tbody)}>
           {rows.map((row, index) => (
-            <tr key={rowKey(row, index)} className="border-b border-border">
-              {columns.map((column) => (
+            <tr
+              key={rowKey(row, index)}
+              className={cards ? CARD_TABLE.row : "border-b border-border"}
+            >
+              {columns.map((column, columnIndex) => (
                 <td
                   key={column.key}
+                  data-label={cards ? column.header : undefined}
                   className={cn(
-                    "px-3 py-2",
+                    cards
+                      ? columnIndex === 0
+                        ? CARD_TABLE.lead
+                        : column.header
+                          ? CARD_TABLE.cell
+                          : CARD_TABLE.bare
+                      : "px-3 py-2",
                     column.align === "right" && "text-right tabular-nums",
                   )}
                 >

@@ -78,7 +78,14 @@ export function UnwatchedItems({ instanceIds }: { instanceIds?: string }) {
 
   return (
     <Card
-      title={`Never played — showing first ${ITEM_LIMIT}, by title`}
+      title={
+        <>
+          Never played
+          <span className="ml-2 font-normal text-muted">
+            first {ITEM_LIMIT}, by title
+          </span>
+        </>
+      }
       actions={typeControl}
     >
       {state.status === "loading" && <Spinner label="Loading titles…" />}

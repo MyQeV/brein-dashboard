@@ -45,6 +45,9 @@ export default async function UserDashboardPage(
 
   const data = result.data as Exclude<UserDashboard, { supported: false }>;
   const basePath = `/instance/${id}/user-dashboard`;
+  const lastActivity = data.stats?.last_activity
+    ? formatDateTime(data.stats.last_activity).split(", ")
+    : [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -76,11 +79,10 @@ export default async function UserDashboardPage(
             />
             <StatTile
               label="Last activity"
-              value={
-                data.stats.last_activity
-                  ? formatDateTime(data.stats.last_activity)
-                  : "Never"
-              }
+              // Date as the number, time as the hint: "14/09/2026, 20:27" in
+              // the tile's large type wrapped mid-string on a phone.
+              value={lastActivity[0] ?? "Never"}
+              hint={lastActivity[1]}
             />
           </div>
 

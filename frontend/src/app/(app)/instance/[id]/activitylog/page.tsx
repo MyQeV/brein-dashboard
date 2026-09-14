@@ -62,6 +62,7 @@ export default async function ActivityLogPage(
       <Card title={`Activity (${data.total})`}>
         <DataTable<ActivityEntry & Record<string, unknown>>
           rows={data.entries as (ActivityEntry & Record<string, unknown>)[]}
+          cards
           rowKey={(row, index) => String(row.entry_id ?? index)}
           empty="No activity for these filters."
           columns={[

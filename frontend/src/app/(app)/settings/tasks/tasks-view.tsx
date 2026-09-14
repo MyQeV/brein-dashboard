@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CONTROL_HEIGHT } from "@/components/ui/control";
+import { CARD_TABLE } from "@/components/ui/table";
 import { cn } from "@/lib/cn";
 import { formatDateTime } from "@/lib/format";
 import type { ScheduledTask } from "@/lib/types";
@@ -48,26 +49,28 @@ function TaskRow({
   }
 
   return (
-    <tr className="border-b border-border">
-      <td className="px-3 py-2">
+    <tr className={CARD_TABLE.row}>
+      <td className={CARD_TABLE.lead}>
         <span className="block">{task.name}</span>
-        <span className="block font-mono text-xs text-muted">{task.key}</span>
+        <span className="block font-mono text-xs font-normal text-muted">{task.key}</span>
       </td>
-      <td className="px-3 py-2">
-        <input
-          value={interval}
-          inputMode="numeric"
-          aria-label={`Interval in seconds for ${task.name}`}
-          disabled={pending}
-          onChange={(event) => setIntervalValue(event.target.value)}
-          onBlur={commitInterval}
-          className={`${CONTROL_HEIGHT.sm} w-24 rounded-md border border-border bg-bg px-2 text-sm`}
-        />
-        <span className="ml-2 text-xs text-muted">
-          {formatInterval(task.interval_seconds)}
+      <td data-label="Interval (s)" className={CARD_TABLE.cell}>
+        <span className="flex items-center gap-2">
+          <input
+            value={interval}
+            inputMode="numeric"
+            aria-label={`Interval in seconds for ${task.name}`}
+            disabled={pending}
+            onChange={(event) => setIntervalValue(event.target.value)}
+            onBlur={commitInterval}
+            className={`${CONTROL_HEIGHT.sm} w-24 rounded-md border border-border bg-bg px-2 text-sm`}
+          />
+          <span className="text-xs text-muted">
+            {formatInterval(task.interval_seconds)}
+          </span>
         </span>
       </td>
-      <td className="px-3 py-2">
+      <td data-label="Status" className={CARD_TABLE.cell}>
         <span
           className={cn(
             "text-sm",
@@ -81,10 +84,14 @@ function TaskRow({
           {task.is_running ? "Running" : (task.last_status ?? "never run")}
         </span>
       </td>
-      <td className="px-3 py-2 text-sm text-muted">{formatDateTime(task.last_run_at)}</td>
-      <td className="px-3 py-2 text-sm text-muted">{formatDateTime(task.next_due_at)}</td>
-      <td className="px-3 py-2">
-        <div className="flex justify-end gap-2">
+      <td data-label="Last run" className={cn(CARD_TABLE.cell, "text-sm text-muted")}>
+        {formatDateTime(task.last_run_at)}
+      </td>
+      <td data-label="Next due" className={cn(CARD_TABLE.cell, "text-sm text-muted")}>
+        {formatDateTime(task.next_due_at)}
+      </td>
+      <td className={CARD_TABLE.bare}>
+        <div className="flex justify-end gap-2 max-lg:pt-1">
           <Button
             size="sm"
             variant="secondary"
@@ -151,35 +158,33 @@ export function TasksView({ tasks }: { tasks: ScheduledTask[] }) {
           edits — for the other. */}
       {groups.map((group) => (
         <Card key={group.key} title={group.label}>
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-border text-left">
-                  <th scope="col" className="px-3 py-2 font-medium text-muted">
-                    Task
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-muted">
-                    Interval (s)
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-muted">
-                    Status
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-muted">
-                    Last run
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-muted">
-                    Next due
-                  </th>
-                  <th scope="col" className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {group.tasks.map((task) => (
-                  <TaskRow key={task.id} task={task} onError={setError} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <table className={CARD_TABLE.table}>
+            <thead className={CARD_TABLE.thead}>
+              <tr className="border-b border-border text-left">
+                <th scope="col" className="px-3 py-2 font-medium text-muted">
+                  Task
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium text-muted">
+                  Interval (s)
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium text-muted">
+                  Status
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium text-muted">
+                  Last run
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium text-muted">
+                  Next due
+                </th>
+                <th scope="col" className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody className={CARD_TABLE.tbody}>
+              {group.tasks.map((task) => (
+                <TaskRow key={task.id} task={task} onError={setError} />
+              ))}
+            </tbody>
+          </table>
         </Card>
       ))}
     </div>

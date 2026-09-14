@@ -15,7 +15,7 @@ export function Card({
   return (
     <section className={cn("rounded-lg bg-surface", className)}>
       {(title || actions) && (
-        <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-4 py-3">
           {title ? <h2 className="text-sm font-semibold">{title}</h2> : <span />}
           {actions}
         </header>

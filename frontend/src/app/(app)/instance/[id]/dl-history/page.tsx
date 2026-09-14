@@ -56,6 +56,7 @@ export default async function DownloadHistoryPage(
       ) : (
         <DataTable<DownloadHistoryItem & Record<string, unknown>>
           rows={items as (DownloadHistoryItem & Record<string, unknown>)[]}
+          cards
           rowKey={(row, index) => row.id || String(index)}
           empty="No completed downloads."
           columns={[

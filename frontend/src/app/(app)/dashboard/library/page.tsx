@@ -86,6 +86,7 @@ export default async function LibraryPage(props: PageProps<"/dashboard/library">
           <Card title="By server and type">
             <DataTable<UnwatchedSummary>
               rows={summary}
+              cards
               rowKey={(row) => `${row.instance_id}:${row.item_type}`}
               empty="Nothing synced yet."
               columns={[
