@@ -15,6 +15,7 @@ import { clientFetch } from "@/lib/client-fetch";
 import { formatCount, formatDuration } from "@/lib/format";
 import { rowNumber, rowText } from "@/lib/rows";
 import type { MediaMetrics } from "@/lib/types";
+import { MODAL_LISTS_EXPANDED, useBooleanPreference } from "@/lib/use-preference";
 
 /**
  * Which headline number was clicked. Plays, watch time and active users are
@@ -54,6 +55,7 @@ export function KpiModal({
   onClose: () => void;
 }) {
   const timeZone = metrics.app_timezone || "UTC";
+  const listsExpanded = useBooleanPreference(MODAL_LISTS_EXPANDED);
   const multiDay = metrics.start_date !== metrics.end_date;
 
   // A set, not one key: opening a row must not close the ones already open.
@@ -173,6 +175,7 @@ export function KpiModal({
             rows={allSessions.rows}
             timeZone={timeZone}
             capped={isCapped(allSessions.rows, SESSION_LIMIT)}
+            defaultExpanded={listsExpanded}
           />
         )}
       </Modal>
