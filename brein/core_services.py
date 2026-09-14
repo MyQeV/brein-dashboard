@@ -111,14 +111,48 @@ async def sabnzbd_settings(
         sabnzbd.get_status(base_url, api_key),
         sabnzbd.get_server_stats(base_url, api_key),
     )
+    # mode=status answers {"status": {...}}; the page lists what it is given,
+    # so it saw one key holding an object. Unwrap it and keep the fields worth
+    # a row, version first.
+    status = status_data.get("status") if aok and isinstance(status_data, dict) else None
+    status = status if isinstance(status, dict) else {}
     out: dict[str, Any] = {
-        "settings_sab_status": status_data if aok else None,
+        "settings_sab_status": (
+            {
+                key: status[key]
+                for key in _SAB_STATUS_FIELDS
+                if key in status
+            }
+            if aok
+            else None
+        ),
         "settings_sab_server_stats": stats if bok else None,
     }
     if instance_id is not None:
-        out[
-            "settings_sabnzbd_stats_snapshot"
-        ] = await store_sabnzbd_stats.get_latest_snapshot(instance_id)
+        snapshot = await store_sabnzbd_stats.get_latest_snapshot(instance_id)
+        out["settings_sabnzbd_stats_snapshot"] = (
+            {
+                "collected_at": snapshot.collected_at,
+                "bytes_today": snapshot.bytes_today,
+                "bytes_week": snapshot.bytes_week,
+                "bytes_month": snapshot.bytes_month,
+                "bytes_total": snapshot.bytes_total,
+            }
+            if snapshot
+            else None
+        )
     if not aok:
         out["settings_fetch_error"] = "Could not reach SABnzbd."
     return out
+
+
+_SAB_STATUS_FIELDS = (
+    "version",
+    "uptime",
+    "paused",
+    "speed",
+    "diskspace1",
+    "diskspace2",
+    "loadavg",
+    "cache_size",
+)

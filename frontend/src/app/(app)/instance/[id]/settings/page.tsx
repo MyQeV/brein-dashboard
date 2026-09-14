@@ -42,11 +42,22 @@ const INTERESTING = [
   "machineIdentifier",
 ];
 
-function InfoList({ data }: { data: Record<string, unknown> }) {
+function InfoList({
+  data,
+  all = false,
+}: {
+  data: Record<string, unknown>;
+  /** The API already picked the fields; list them as given. */
+  all?: boolean;
+}) {
   const entries = INTERESTING.filter((key) => data[key] !== undefined).map(
     (key) => [key, data[key]] as const,
   );
-  const rows = entries.length > 0 ? entries : Object.entries(data).slice(0, 10);
+  const rows = all
+    ? Object.entries(data)
+    : entries.length > 0
+      ? entries
+      : Object.entries(data).slice(0, 10);
 
   return (
     <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-1 text-sm">
@@ -133,7 +144,7 @@ export default async function InstanceSettingsPage(
 
       {info.settings_sab_status && (
         <Card title="SABnzbd status">
-          <InfoList data={info.settings_sab_status} />
+          <InfoList data={info.settings_sab_status} all />
         </Card>
       )}
 
