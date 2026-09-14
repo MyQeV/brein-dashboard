@@ -206,11 +206,16 @@ export function UserEditModal({
           </p>
         )}
 
-        <div className="flex items-center gap-2">
-          <Button onClick={save} disabled={pending}>
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+          <Button onClick={save} disabled={pending} className="w-full lg:w-auto">
             {pending ? "Saving…" : "Save changes"}
           </Button>
-          <Button variant="ghost" onClick={onClose} disabled={pending}>
+          <Button
+            variant="ghost"
+            onClick={onClose}
+            disabled={pending}
+            className="w-full lg:w-auto"
+          >
             Cancel
           </Button>
         </div>
