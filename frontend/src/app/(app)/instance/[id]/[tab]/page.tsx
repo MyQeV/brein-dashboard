@@ -116,6 +116,7 @@ export default async function InstanceArrTabPage(
       ) : (
         <DataTable
           rows={rows}
+          cards
           rowKey={(row, index) => String(row.id ?? index)}
           empty={config.empty ?? "Nothing to show."}
           columns={config.columns.map((column) => ({

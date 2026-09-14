@@ -58,6 +58,7 @@ export default async function DatabasePage(props: PageProps<"/settings/database"
       <Card title={table ?? "No tables"}>
         <DataTable<Row>
           rows={data.rows}
+          cards
           columns={data.columns.map((name) => ({ key: name, header: name }))}
           basePath={BASE_PATH}
           headerQuery={{ table, per_page: perPage }}

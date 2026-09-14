@@ -5,6 +5,8 @@ import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CONTROL_HEIGHT } from "@/components/ui/control";
+import { CARD_TABLE } from "@/components/ui/table";
+import { cn } from "@/lib/cn";
 import { formatBytes } from "@/lib/format";
 import type { DownloadQueue } from "@/lib/types";
 import {
@@ -162,96 +164,104 @@ export function QueueView({
         {queue.items.length === 0 ? (
           <p className="text-sm text-muted">The queue is empty.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-border text-left">
-                  <th scope="col" className="px-3 py-2 font-medium text-muted">
-                    Name
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-muted">
-                    Status
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-muted">
-                    Progress
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium text-muted">
-                    Size
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-muted">
-                    ETA
-                  </th>
-                  <th scope="col" className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {queue.items.map((item) => (
-                  <tr key={item.id} className="border-b border-border">
-                    <td className="max-w-md truncate px-3 py-2" title={item.name}>
-                      {item.name}
-                    </td>
-                    <td className="px-3 py-2">{item.status}</td>
-                    <td className="px-3 py-2">
-                      <span className="flex items-center gap-2">
-                        <span className="h-1.5 w-24 rounded-full bg-border">
-                          <span
-                            className="block h-full rounded-full bg-accent"
-                            style={{ width: `${item.progress_pct}%` }}
-                          />
-                        </span>
-                        <span className="tabular-nums text-xs text-muted">
-                          {item.progress_pct}%
-                        </span>
+          <table className={CARD_TABLE.table}>
+            <thead className={CARD_TABLE.thead}>
+              <tr className="border-b border-border text-left">
+                <th scope="col" className="px-3 py-2 font-medium text-muted">
+                  Name
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium text-muted">
+                  Status
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium text-muted">
+                  Progress
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-medium text-muted">
+                  Size
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium text-muted">
+                  ETA
+                </th>
+                <th scope="col" className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody className={CARD_TABLE.tbody}>
+              {queue.items.map((item) => (
+                <tr key={item.id} className={CARD_TABLE.row}>
+                  <td
+                    className={cn(CARD_TABLE.lead, "lg:max-w-md lg:truncate")}
+                    title={item.name}
+                  >
+                    {item.name}
+                  </td>
+                  <td data-label="Status" className={CARD_TABLE.cell}>
+                    {item.status}
+                  </td>
+                  <td data-label="Progress" className={CARD_TABLE.cell}>
+                    <span className="flex items-center gap-2">
+                      <span className="h-1.5 w-24 rounded-full bg-border">
+                        <span
+                          className="block h-full rounded-full bg-accent"
+                          style={{ width: `${item.progress_pct}%` }}
+                        />
                       </span>
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {formatBytes(item.size_bytes)}
-                    </td>
-                    <td className="px-3 py-2 text-muted">{formatEta(item.eta)}</td>
-                    <td className="px-3 py-2">
-                      <span className="flex justify-end gap-2">
-                        {perItemPause && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={pending}
-                            onClick={() =>
-                              act(() =>
-                                item.status.toLowerCase().startsWith("pause")
-                                  ? resumeItem(instanceId, item.id)
-                                  : pauseItem(instanceId, item.id),
-                              )
+                      <span className="tabular-nums text-xs text-muted">
+                        {item.progress_pct}%
+                      </span>
+                    </span>
+                  </td>
+                  <td
+                    data-label="Size"
+                    className={cn(CARD_TABLE.cell, "text-right tabular-nums")}
+                  >
+                    {formatBytes(item.size_bytes)}
+                  </td>
+                  <td data-label="ETA" className={cn(CARD_TABLE.cell, "text-muted")}>
+                    {formatEta(item.eta)}
+                  </td>
+                  <td className={CARD_TABLE.bare}>
+                    <span className="flex justify-end gap-2 max-lg:pt-1">
+                      {perItemPause && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={pending}
+                          onClick={() =>
+                            act(() =>
+                              item.status.toLowerCase().startsWith("pause")
+                                ? resumeItem(instanceId, item.id)
+                                : pauseItem(instanceId, item.id),
+                            )
+                          }
+                        >
+                          {item.status.toLowerCase().startsWith("pause")
+                            ? "Resume"
+                            : "Pause"}
+                        </Button>
+                      )}
+                      {isSab && (
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          disabled={pending}
+                          onClick={() => {
+                            if (
+                              !window.confirm(`Remove "${item.name}" from the queue?`)
+                            ) {
+                              return;
                             }
-                          >
-                            {item.status.toLowerCase().startsWith("pause")
-                              ? "Resume"
-                              : "Pause"}
-                          </Button>
-                        )}
-                        {isSab && (
-                          <Button
-                            size="sm"
-                            variant="danger"
-                            disabled={pending}
-                            onClick={() => {
-                              if (
-                                !window.confirm(`Remove "${item.name}" from the queue?`)
-                              ) {
-                                return;
-                              }
-                              act(() => deleteItem(instanceId, item.id));
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        )}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                            act(() => deleteItem(instanceId, item.id));
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      )}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </Card>
     </div>

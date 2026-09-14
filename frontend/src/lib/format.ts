@@ -2,8 +2,11 @@
 
 export function formatDuration(seconds: number): string {
   if (!seconds) return "0m";
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.round((seconds % 3600) / 60);
+  // Rounded to whole minutes first: rounding the remainder on its own made
+  // 265h 59m 40s into "265h 60m".
+  const totalMinutes = Math.round(seconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
   if (hours === 0) return `${minutes}m`;
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
 }

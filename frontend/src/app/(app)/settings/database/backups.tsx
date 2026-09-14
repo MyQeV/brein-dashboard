@@ -88,9 +88,11 @@ export function Backups() {
             {state.backups.map((backup) => (
               <li
                 key={backup.name}
-                className="flex items-center justify-between gap-4 py-2 text-sm"
+                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2 text-sm"
               >
-                <span className="truncate font-mono text-xs">{backup.name}</span>
+                <span className="w-full truncate font-mono text-xs lg:w-auto lg:flex-1">
+                  {backup.name}
+                </span>
                 <span className="shrink-0 text-muted">
                   {formatDateTime(new Date(backup.modified * 1000).toISOString())}
                 </span>

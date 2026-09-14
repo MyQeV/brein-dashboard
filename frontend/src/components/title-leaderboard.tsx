@@ -63,7 +63,10 @@ export function TitleLeaderboard({
                   <th scope="col" className="py-2 font-normal">
                     Title
                   </th>
-                  <th scope="col" className="py-2 text-right font-normal">
+                  <th
+                    scope="col"
+                    className="whitespace-nowrap py-2 text-right font-normal"
+                  >
                     Watch time
                   </th>
                   <th scope="col" className="w-16 py-2 text-right font-normal">
