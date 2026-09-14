@@ -1,8 +1,7 @@
 # Brein-dashboard
 
-This is part of my private brein repository that i wanted to set public.
-
-Centralized dashboard and management hub for your media stack. 
+This is part of my private brein repository that i want to set public.
+ 
 FastAPI + PostgreSQL API on port **8001**, Next.js frontend on port **3100**.
 
 ## What Brein-dashboard does
@@ -13,6 +12,7 @@ per-user breakdowns, and recent activity. Stats are cached and refreshed
 periodically.
 
 Most charts and KPI's are clickable to show more data in a modal.
+
 <img width="1690" height="836" alt="image" src="https://github.com/user-attachments/assets/4f75ea5d-b834-4244-8390-f13b15d516c6" />
 <img width="1693" height="301" alt="image" src="https://github.com/user-attachments/assets/d8be9306-c0e2-4b3e-bcff-61726f24f8f4" />
 
@@ -21,9 +21,13 @@ Real-time playback state pushed to the UI via WebSocket. Updates every 10
 seconds.
 <img width="1901" height="331" alt="image" src="https://github.com/user-attachments/assets/045603c9-4018-4b92-9b18-602d7f7bcd77" />
 
+Name and server badge are clickable and open the instance in a new browser tab.
+
 ### Release calendar (Sonarr/Radarr)
 Unified calendar view of upcoming and recently released content pulled from
 Sonarr and Radarr.
+
+Items in calendar are clickable and open the instance in a new browser tab.
 <img width="1693" height="869" alt="image" src="https://github.com/user-attachments/assets/52e19db9-8b6d-4cb7-b8c4-ae7e49163493" />
 
 ### Downloads (SABnzbd)
