@@ -26,6 +26,27 @@ def _normalize_base_url(base_url: str) -> str | None:
     return base
 
 
+_CLIENT_IDENTITY = 'MediaBrowser Client="Brein", Device="Brein", DeviceId="brein", Version="1"'
+
+
+def _auth_headers(api_key: str) -> dict[str, str]:
+    """The API key in both forms Emby and Jellyfin read.
+
+    Emby takes X-Emby-Token. Jellyfin took it too until 12.0, which dropped
+    every legacy option (X-Emby-Token, X-Emby-Authorization, ?api_key=) and
+    only honours the Authorization header with its MediaBrowser scheme — the
+    scheme Emby and every earlier Jellyfin accept as well. The same key goes
+    in both headers, so each server reads the one it knows and there is no
+    second token to disagree with the first.
+    """
+    if not api_key:
+        return {}
+    return {
+        "X-Emby-Token": api_key,
+        "Authorization": f'MediaBrowser Token="{api_key}"',
+    }
+
+
 # Message types from Emby WebSocket that indicate playback/session changes.
 EMBY_WS_PLAYBACK_MESSAGE_TYPES = frozenset({"UserDataChanged", "Playstate", "Play"})
 # Message types that indicate user account changes (trigger users sync).
@@ -38,7 +59,7 @@ async def test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
     if not base:
         return False, "Invalid base URL"
     url = urljoin(base + "/", "System/Info")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     try:
         async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
             r = await client.get(url, headers=headers)
@@ -63,7 +84,7 @@ async def get_system_info(base_url: str, api_key: str) -> tuple[bool, dict | Non
     if not base:
         return False, None
     url = urljoin(base + "/", "System/Info")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     try:
         async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
             r = await client.get(url, headers=headers)
@@ -83,7 +104,7 @@ async def get_system_info_public(
     if not base:
         return False, None
     url = urljoin(base + "/", "System/Info/Public")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     try:
         async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
             r = await client.get(url, headers=headers)
@@ -102,7 +123,7 @@ async def post_system_restart(base_url: str, api_key: str) -> tuple[bool, str]:
     if not base:
         return False, "Invalid base URL"
     url = urljoin(base + "/", "System/Restart")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     try:
         async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
             r = await client.post(url, headers=headers)
@@ -127,7 +148,7 @@ async def get_users(base_url: str, api_key: str) -> tuple[bool, list | None]:
     if not base:
         return False, None
     url = urljoin(base + "/", "Users/Query")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     try:
         async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
             r = await client.get(url, headers=headers)
@@ -149,10 +170,10 @@ async def authenticate_user(
     if not base:
         return False, None
     url = urljoin(base + "/", "Users/AuthenticateByName")
+    # The identity in both forms too: Jellyfin 12.0 reads only Authorization.
     headers = {
-        "X-Emby-Authorization": (
-            'MediaBrowser Client="Brein", Device="Brein", DeviceId="brein", Version="1"'
-        ),
+        "Authorization": _CLIENT_IDENTITY,
+        "X-Emby-Authorization": _CLIENT_IDENTITY,
         "Content-Type": "application/json",
     }
     payload = {"Username": username, "Pw": password}
@@ -178,7 +199,7 @@ async def get_activity_log_entries(
         base + "/",
         "System/ActivityLog/Entries?Limit={}&StartIndex={}".format(limit, start_index),
     )
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     try:
         async with new_http_client(15.0) as client:
             r = await client.get(url, headers=headers)
@@ -210,7 +231,7 @@ async def get_items_by_ids(
     if not ids:
         return False, []
     url = urljoin(base + "/", "Items")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     params = {"Ids": ",".join(ids)}
     try:
         async with new_http_client(30.0) as client:
@@ -258,7 +279,7 @@ async def get_items_by_type(
     if not base:
         return False, []
     url = urljoin(base + "/", "Items")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     collected: list[dict[str, Any]] = []
     start_index = 0
     try:
@@ -307,7 +328,7 @@ async def get_sessions(
     if not base:
         return []
     url = urljoin(base + "/", "Sessions")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     params = (
         {"ActiveWithinSeconds": active_within_seconds}
         if active_within_seconds is not None
@@ -456,7 +477,7 @@ async def _get_library_media_folders(base_url: str, api_key: str) -> list:
     if not base:
         return []
     url = urljoin(base + "/", "Library/MediaFolders")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     try:
         async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
             r = await client.get(url, headers=headers)
@@ -490,7 +511,7 @@ async def get_media_folders(base_url: str, api_key: str) -> tuple[bool, list | N
     base = _normalize_base_url(base_url)
     if not base:
         return False, None
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     seen = set()
     out = []
 
@@ -565,7 +586,7 @@ async def get_user_by_id(
     if not base:
         return False, None
     url = urljoin(base + "/", f"Users/{user_id}")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     try:
         async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
             r = await client.get(url, headers=headers)
@@ -641,9 +662,7 @@ async def update_user_policy(
     if not base:
         return False, "Invalid base URL"
     url = urljoin(base + "/", f"Users/{user_id}/Policy")
-    headers = (
-        {"X-Emby-Token": api_key, "Content-Type": "application/json"} if api_key else {}
-    )
+    headers = {**_auth_headers(api_key), "Content-Type": "application/json"}
     try:
         async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
             r = await client.post(url, headers=headers, json=policy)
@@ -676,9 +695,7 @@ async def update_user(
     if not base:
         return False, "Invalid base URL"
     url = urljoin(base + "/", f"Users/{user_id}")
-    headers = (
-        {"X-Emby-Token": api_key, "Content-Type": "application/json"} if api_key else {}
-    )
+    headers = {**_auth_headers(api_key), "Content-Type": "application/json"}
     try:
         async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
             r = await client.post(url, headers=headers, json=user)
@@ -698,9 +715,7 @@ async def update_user_password(
     if not base:
         return False, "Invalid base URL"
     url = urljoin(base + "/", f"Users/{user_id}/Password")
-    headers = (
-        {"X-Emby-Token": api_key, "Content-Type": "application/json"} if api_key else {}
-    )
+    headers = {**_auth_headers(api_key), "Content-Type": "application/json"}
     payload = {"NewPw": new_password}
     try:
         async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
