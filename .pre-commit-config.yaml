@@ -1,0 +1,40 @@
+# See https://pre-commit.com for usage
+repos:
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.8.4
+  hooks:
+  - id: ruff
+    args: [ --fix ]
+    additional_dependencies: [ ruff==0.8.4 ]
+  - id: ruff-format
+    additional_dependencies: [ ruff==0.8.4 ]
+
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v5.0.0
+  hooks:
+  - id: trailing-whitespace
+  - id: end-of-file-fixer
+  - id: check-yaml
+  - id: check-json
+  - id: check-merge-conflict
+  - id: check-added-large-files
+  - id: debug-statements
+
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: v1.13.0
+  hooks:
+  - id: mypy
+    additional_dependencies: [ types-PyJWT, types-passlib, types-requests ]
+    # public/stubs/brein-extras is a template dropped into place by
+    # scripts/export-public.py, not part of this package — its hyphenated
+    # directory name isn't a valid Python module path, which mypy rejects
+    # outright when it's passed the file directly.
+    exclude: ^public/
+
+- repo: https://github.com/Yelp/detect-secrets
+  rev: v1.5.0
+  hooks:
+  - id: detect-secrets
+    # Lockfile integrity hashes are content digests, not credentials, and they
+    # trip the high-entropy detector on every line.
+    exclude: (?x)^(.*/)?(pnpm-lock\.yaml|package-lock\.json|poetry\.lock|uv\.lock)$

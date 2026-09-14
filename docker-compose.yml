@@ -1,0 +1,83 @@
+name: brein
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-brein}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-brein}
+      PGTZ: ${TZ:-UTC}
+    command: postgres -c log_timezone=${TZ:-UTC}
+    volumes:
+      - ${POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-brein} -d ${POSTGRES_DB:-brein}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  brein:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-brein}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-brein}
+      TZ: ${TZ:-UTC}
+      # Deliberately empty by default. Trusting a proxy means believing its
+      # X-Forwarded-For, and that is only safe when the proxy *appends* its
+      # own view of the peer — Next's rewrite proxy does not forward the
+      # header at all, so trusting it meant believing whatever the browser
+      # sent. With the API port published and the private ranges trusted, any
+      # client could hand itself a fresh rate-limit bucket per request by
+      # incrementing X-Forwarded-For: unlimited password guessing against
+      # /token. Set this only to the CIDRs of a real reverse proxy in front
+      # of Brein, and see .env.example for what that costs.
+      BREIN_TRUSTED_PROXIES: ${BREIN_TRUSTED_PROXIES:-}
+    volumes:
+      - ${BREIN_DATA_DIR:-./data/brein}:/app/data
+    healthcheck:
+      # /api/setup-status needs no authentication and is served only once the
+      # startup schema work has finished, which is what the frontend must
+      # wait for: without it the first visitors get error pages while the
+      # repairs are still running.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/api/setup-status', timeout=5).status == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the rewrite manifest at build time; see frontend/Dockerfile.
+        BREIN_API_ORIGIN: http://brein:8001
+    restart: unless-stopped
+    ports:
+      # Host side is configurable and does not default to 3000: that port is
+      # the default for Next, Grafana and much of the Node ecosystem, so it is
+      # usually already taken on a machine running anything else.
+      - "${BREIN_FRONTEND_PORT:-3100}:3000"
+    environment:
+      # Server-side calls go container-to-container; the browser reaches the
+      # API through this service's own /api rewrite, keeping cookies
+      # first-party.
+      BREIN_API_ORIGIN: http://brein:8001
+      TZ: ${TZ:-UTC}
+    depends_on:
+      brein:
+        condition: service_healthy

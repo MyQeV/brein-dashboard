@@ -1,0 +1,228 @@
+@import "tailwindcss";
+
+/* Five themes on one structure.
+ *
+ * Every theme defines the same tokens: a page background, a stage the panels
+ * sit on, a second stage for rows and tracks, a hairline rule, two inks, one
+ * accent with the ink that goes on it, the delta colours, eight chart slots
+ * and a five-step ramp. The chart slots were run through the dataviz
+ * palette validator on each theme's stage (see the spec); slot 1 is the
+ * theme's accent snapped into the validator's lightness band, which is why
+ * it is darker than --accent.
+ *
+ * Theme selection is an explicit `data-theme` attribute (never a
+ * prefers-color-scheme media query), set pre-paint by the inline script in
+ * layout.tsx and persisted server-side through PUT /api/user/preferences/theme.
+ * "dark" stays the id of the default theme; it is labelled Cinema. */
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-card: var(--surface-2);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-success: var(--success);
+  --color-error: var(--error);
+  --color-warning: var(--warning);
+
+  --font-sans: var(--font-sans-stack);
+  --font-mono: var(--font-mono-stack);
+
+  --radius-sm: 0.5rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
+}
+
+:root {
+  /* Set by next/font in layout.tsx; the fallbacks cover the moment before it
+     resolves and any build that omits the font files. */
+  --font-sans-stack: var(--font-bricolage), "Helvetica Neue", Arial, system-ui, sans-serif;
+  --font-mono-stack: var(--font-plex-mono), ui-monospace, "Cascadia Code", monospace;
+  --transition: 0.15s ease-out;
+
+  --z-dropdown: 100;
+  --z-overlay: 500;
+  --z-modal: 600;
+  --z-toast: 900;
+
+  --shadow-elevated: 0 24px 64px rgb(0 0 0 / 0.6);
+  --scrim: rgb(0 0 0 / 0.55);
+}
+
+:root,
+[data-theme="dark"] {
+  --bg: #08080b;
+  --surface: #121217;
+  --surface-2: #1c1c24;
+  --border: #22222b;
+  --text: #f1ede4;
+  --muted: #8b877e;
+  --accent: #f0a63a;
+  --accent-ink: #08080b;
+  --success: #7fcf8a;
+  --error: #e0806e;
+  --warning: #f0a63a;
+  --chart-1: #c57d00;
+  --chart-2: #3b5bdb;
+  --chart-3: #c2255c;
+  --chart-4: #2f9e44;
+  --chart-5: #7048e8;
+  --chart-6: #0891b2;
+  --chart-7: #e8590c;
+  --chart-8: #0ca678;
+  --chart-other: #55524c;
+  --ramp-1: #16161c;
+  --ramp-2: #3a2c14;
+  --ramp-3: #6b4a17;
+  --ramp-4: #a9721f;
+  --ramp-5: #f0a63a;
+}
+
+[data-theme="nord"] {
+  --bg: #242933;
+  --surface: #2e3440;
+  --surface-2: #3b4252;
+  --border: #3b4252;
+  --text: #eceff4;
+  --muted: #aab2c3;
+  --accent: #88c0d0;
+  --accent-ink: #2e3440;
+  --success: #a3be8c;
+  --error: #d08770;
+  --warning: #ebcb8b;
+  --chart-1: #199fbc;
+  --chart-2: #e8590c;
+  --chart-3: #c2255c;
+  --chart-4: #2f9e44;
+  --chart-5: #7048e8;
+  --chart-6: #0891b2;
+  --chart-7: #a16207;
+  --chart-8: #0ca678;
+  --chart-other: #6b7385;
+  --ramp-1: #2e3440;
+  --ramp-2: #3b5460;
+  --ramp-3: #4b7684;
+  --ramp-4: #68a0b0;
+  --ramp-5: #88c0d0;
+}
+
+[data-theme="warm"] {
+  --bg: #100c08;
+  --surface: #1c1510;
+  --surface-2: #2a2018;
+  --border: #2e2318;
+  --text: #f0e6d3;
+  --muted: #9c8873;
+  --accent: #e39a57;
+  --accent-ink: #100c08;
+  --success: #9dbb8a;
+  --error: #d9836b;
+  --warning: #e39a57;
+  --chart-1: #c37d38;
+  --chart-2: #3b5bdb;
+  --chart-3: #c2255c;
+  --chart-4: #2f9e44;
+  --chart-5: #7048e8;
+  --chart-6: #0891b2;
+  --chart-7: #e8590c;
+  --chart-8: #0ca678;
+  --chart-other: #5e5044;
+  --ramp-1: #1c1510;
+  --ramp-2: #402a18;
+  --ramp-3: #6e4523;
+  --ramp-4: #a86a38;
+  --ramp-5: #e39a57;
+}
+
+[data-theme="slate"] {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-2: #21262d;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --accent-ink: #0d1117;
+  --success: #3fb950;
+  --error: #f85149;
+  --warning: #d29922;
+  --chart-1: #4391e9;
+  --chart-2: #e8590c;
+  --chart-3: #c2255c;
+  --chart-4: #2f9e44;
+  --chart-5: #7048e8;
+  --chart-6: #0891b2;
+  --chart-7: #a16207;
+  --chart-8: #0ca678;
+  --chart-other: #57606a;
+  --ramp-1: #161b22;
+  --ramp-2: #1f3a5f;
+  --ramp-3: #2b5a94;
+  --ramp-4: #3f7fcc;
+  --ramp-5: #58a6ff;
+}
+
+[data-theme="light"] {
+  --bg: #f3f1ec;
+  --surface: #ffffff;
+  --surface-2: #ece9e2;
+  --border: #dcd8cf;
+  --text: #16150f;
+  --muted: #6b675e;
+  --accent: #9e620e;
+  --accent-ink: #ffffff;
+  --success: #2e6b3f;
+  --error: #b4541b;
+  --warning: #b06f12;
+  --chart-1: #b06f12;
+  --chart-2: #3b5bdb;
+  --chart-3: #c2255c;
+  --chart-4: #2f9e44;
+  --chart-5: #7048e8;
+  --chart-6: #0891b2;
+  --chart-7: #e8590c;
+  --chart-8: #0ca678;
+  --chart-other: #a19c91;
+  --ramp-1: #f3efe6;
+  --ramp-2: #eacb9a;
+  --ramp-3: #dba55c;
+  --ramp-4: #c98a2f;
+  --ramp-5: #b06f12;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans-stack);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Tailwind v4 ships sr-only; declared here so the utility is available even
+   if the preflight layer is trimmed. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border-width: 0;
+}

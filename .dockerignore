@@ -1,0 +1,47 @@
+# Runtime data (postgres volume, app data) — never needed in the image
+data/
+
+# Git
+.git
+.gitignore
+
+# Secrets & local env
+.env
+.env.*
+
+# Python virtual envs
+.venv
+venv
+env
+
+# Bytecode
+__pycache__
+*.pyc
+*.pyo
+
+# Test & cache artifacts
+.pytest_cache
+
+# Editor configs
+.idea
+.vscode
+.cursor
+
+# Dev-only files
+*.plan.md
+*.db
+*.md
+todo
+redis/
+scripts/
+tests/
+docs/
+.claude/
+.worktrees/
+
+# The frontend builds from its own Dockerfile; without this a local
+# `pnpm install` ships node_modules into the API image.
+frontend/
+
+# Tests and their fixtures are mounted when the suite runs.
+tests/
