@@ -20,9 +20,14 @@ type SettingsInfo = {
   settings_fetch_error: string | null;
 };
 
-/** Show the handful of fields that are actually useful, not the whole payload. */
+/**
+ * Show the handful of fields that are actually useful, not the whole payload.
+ * Sonarr, Radarr, SABnzbd and Plex spell it `version`; Emby and Jellyfin
+ * `Version` — both are listed, or a media server's version never showed.
+ */
 const INTERESTING = [
   "version",
+  "Version",
   "appName",
   "instanceName",
   "startTime",
@@ -32,7 +37,9 @@ const INTERESTING = [
   "isDebug",
   "ServerName",
   "OperatingSystem",
+  "platform",
   "Id",
+  "machineIdentifier",
 ];
 
 function InfoList({ data }: { data: Record<string, unknown> }) {

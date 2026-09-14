@@ -69,6 +69,14 @@ async def load_settings_info(
         if not sok:
             out["settings_fetch_error"] = "Could not reach Radarr."
         return out
+    if st == "plex":
+        from brein.integrations.api import plex as _plex_api
+
+        iok, identity = await _plex_api.get_identity(base_url, api_key)
+        out["settings_system_info"] = identity if iok else None
+        if not iok:
+            out["settings_fetch_error"] = "Could not reach Plex."
+        return out
     hook = load_extensions().instance_settings.get(st)
     if hook:
         out.update(await hook(base_url, api_key, instance_id))
