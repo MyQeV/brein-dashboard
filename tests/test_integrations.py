@@ -207,3 +207,51 @@ async def test_sabnzbd_set_speed_limit_failure():
             "http://192.168.1.10:8080", "abc123", 5000
         )
     assert ok is False
+
+
+# ── Emby / Jellyfin authorization ────────────────────────────────────────────
+
+
+def test_auth_headers_carry_the_token_in_both_forms():
+    """Jellyfin 12.0 dropped X-Emby-Token; Emby still reads it. One key, both headers."""
+    from brein.integrations.api import emby
+
+    headers = emby._auth_headers("abc123")
+    assert headers["X-Emby-Token"] == "abc123"
+    assert headers["Authorization"] == 'MediaBrowser Token="abc123"'
+    assert emby._auth_headers("") == {}
+
+
+@pytest.mark.asyncio
+async def test_jellyfin_requests_send_the_authorization_header():
+    from brein.integrations.api import jellyfin
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=_make_response(200))
+    with patch(
+        "brein.integrations.api.base.get_http_client", return_value=mock_client
+    ):
+        ok, _ = await jellyfin.test_connection("http://jellyfin.local:8096", "abc123")
+    assert ok is True
+    sent = mock_client.get.call_args.kwargs["headers"]
+    assert sent["Authorization"] == 'MediaBrowser Token="abc123"'
+    assert sent["X-Emby-Token"] == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_media_server_login_sends_client_identity_in_both_forms():
+    """AuthenticateByName carries the client identity; 12.0 only reads Authorization."""
+    from brein.integrations.api import emby
+
+    response = _make_response(200)
+    response.json = MagicMock(return_value={"AccessToken": "t"})
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    with patch("brein.integrations.api.emby.new_http_client", return_value=mock_client):
+        ok, _ = await emby.authenticate_user("http://emby.local:8096", "u", "p")
+    assert ok is True
+    sent = mock_client.post.call_args.kwargs["headers"]
+    assert sent["Authorization"].startswith("MediaBrowser Client=")
+    assert sent["X-Emby-Authorization"] == sent["Authorization"]

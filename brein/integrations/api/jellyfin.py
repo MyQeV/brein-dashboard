@@ -3,6 +3,7 @@
 import logging
 
 from brein.integrations.api.emby import (
+    _auth_headers,
     _get_library_media_folders,
     get_user_by_id,
     get_activity_log_entries,
@@ -50,7 +51,7 @@ async def get_users(base_url: str, api_key: str) -> tuple[bool, list | None]:
     if not base:
         return False, None
     url = urljoin(base + "/", "Users")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     try:
         r = await get_http_client().get(
             url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT
@@ -69,7 +70,7 @@ async def get_users(base_url: str, api_key: str) -> tuple[bool, list | None]:
 
 
 async def test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
-    """Test connection to Jellyfin (GET /System/Info with X-Emby-Token). Returns (success, message)."""
+    """Test connection to Jellyfin (GET /System/Info with the API key). Returns (success, message)."""
     from brein.integrations.api.base import get_http_client, DEFAULT_HTTP_TIMEOUT
     from urllib.parse import urljoin
 
@@ -77,7 +78,7 @@ async def test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
     if not base.startswith(("http://", "https://")):
         return False, "Invalid base URL"
     url = urljoin(base + "/", "System/Info")
-    headers = {"X-Emby-Token": api_key} if api_key else {}
+    headers = _auth_headers(api_key)
     try:
         r = await get_http_client().get(
             url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT

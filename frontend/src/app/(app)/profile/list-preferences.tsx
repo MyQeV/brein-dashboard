@@ -7,6 +7,7 @@ import { CONTROL_HEIGHT } from "@/components/ui/control";
 import { Spinner } from "@/components/ui/spinner";
 import { clientFetch } from "@/lib/client-fetch";
 import { PAGE_SIZES } from "@/lib/params";
+import { MODAL_LISTS_EXPANDED } from "@/lib/use-preference";
 
 /** Preference keys are `list_pagesize_<service>_<list>`. */
 const PAGE_SIZE_LISTS: { key: string; label: string }[] = [
@@ -57,7 +58,7 @@ export function ListPreferences() {
     return () => controller.abort();
   }, [load]);
 
-  async function setPageSize(key: string, value: number) {
+  async function setPreference(key: string, value: number | boolean) {
     setSaving(key);
     try {
       await clientFetch(`/api/user/preferences/${encodeURIComponent(key)}`, {
@@ -112,8 +113,33 @@ export function ListPreferences() {
     .filter((key) => key.startsWith(COLUMN_PREFIX))
     .sort();
 
+  const modalListsExpanded = state.prefs[MODAL_LISTS_EXPANDED] === true;
+
   return (
     <>
+      <Card title="Modal lists">
+        <p className="mb-3 text-sm text-muted">
+          How the day-by-day lists in the dashboard's dialogs start out.
+        </p>
+        <div className="flex items-center justify-between gap-4 py-2">
+          <label htmlFor={MODAL_LISTS_EXPANDED} className="text-sm">
+            Day groups
+          </label>
+          <select
+            id={MODAL_LISTS_EXPANDED}
+            value={modalListsExpanded ? "expanded" : "collapsed"}
+            disabled={saving === MODAL_LISTS_EXPANDED}
+            onChange={(event) =>
+              setPreference(MODAL_LISTS_EXPANDED, event.target.value === "expanded")
+            }
+            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
+          >
+            <option value="collapsed">Collapsed</option>
+            <option value="expanded">Expanded</option>
+          </select>
+        </div>
+      </Card>
+
       <Card title="List page sizes">
         <p className="mb-3 text-sm text-muted">Rows shown per page for each list.</p>
         <ul className="flex flex-col divide-y divide-border">
@@ -129,7 +155,7 @@ export function ListPreferences() {
                   id={key}
                   value={value}
                   disabled={saving === key}
-                  onChange={(event) => setPageSize(key, Number(event.target.value))}
+                  onChange={(event) => setPreference(key, Number(event.target.value))}
                   className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
                 >
                   {PAGE_SIZES.map((size) => (

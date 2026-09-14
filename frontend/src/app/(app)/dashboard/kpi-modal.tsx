@@ -15,6 +15,7 @@ import { clientFetch } from "@/lib/client-fetch";
 import { formatCount, formatDuration } from "@/lib/format";
 import { rowNumber, rowText } from "@/lib/rows";
 import type { MediaMetrics } from "@/lib/types";
+import { MODAL_LISTS_EXPANDED, useBooleanPreference } from "@/lib/use-preference";
 
 /**
  * Which headline number was clicked. Plays, watch time and active users are
@@ -54,13 +55,18 @@ export function KpiModal({
   onClose: () => void;
 }) {
   const timeZone = metrics.app_timezone || "UTC";
+  const listsExpanded = useBooleanPreference(MODAL_LISTS_EXPANDED);
   const multiDay = metrics.start_date !== metrics.end_date;
 
   // A set, not one key: opening a row must not close the ones already open.
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  // It holds the rows flipped away from the preference's default, so "all
+  // open" is the empty set and a preference that lands after the first paint
+  // flips every untouched row.
+  const [flipped, setFlipped] = useState<ReadonlySet<string>>(new Set());
+  const isOpen = (key: string) => flipped.has(key) !== listsExpanded;
 
   function toggle(key: string) {
-    setExpanded((current) => {
+    setFlipped((current) => {
       const next = new Set(current);
       if (!next.delete(key)) next.add(key);
       return next;
@@ -124,36 +130,47 @@ export function KpiModal({
     return () => controller.abort();
   }, [target, query]);
 
-  function toggleUser(user: UserRow) {
-    const wasOpen = expanded.has(user.key);
-    toggle(user.key);
-    if (wasOpen) return;
-    if (userSessions[user.key]) return;
+  // Every open row without its sessions yet gets them — whether it was
+  // clicked open or the preference opened it. Rows are fetched one user at
+  // a time so each stays complete under its own cap; with the preference on
+  // that is one request per user, which the browser queues, and is the
+  // trade the user made in choosing it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: userSessions and isOpen are read, not triggers — the loading marker this sets is what stops a refetch
+  useEffect(() => {
+    if (target === "avg-session") return;
+    const pending = users.filter((user) => isOpen(user.key) && !userSessions[user.key]);
+    if (pending.length === 0) return;
 
-    setUserSessions((current) => ({ ...current, [user.key]: { status: "loading" } }));
+    setUserSessions((current) => {
+      const next = { ...current };
+      for (const user of pending) next[user.key] = { status: "loading" };
+      return next;
+    });
     const separator = query.startsWith("?") ? "&" : "?";
-    // `user_ids` wants the compound "instance_id:user_id" key; a bare id is
-    // silently ignored by _user_instance_filter.
-    clientFetch<SessionRow[]>(
-      `/api/dashboard/sessions${query}${separator}` +
-        `user_ids=${encodeURIComponent(user.key)}&limit=${SESSION_LIMIT}`,
-    )
-      .then((rows) => {
-        setUserSessions((current) => ({
-          ...current,
-          [user.key]: { status: "ok", rows },
-        }));
-      })
-      .catch((error: unknown) => {
-        setUserSessions((current) => ({
-          ...current,
-          [user.key]: {
-            status: "error",
-            message: error instanceof Error ? error.message : "Failed to load sessions",
-          },
-        }));
-      });
-  }
+    for (const user of pending) {
+      // `user_ids` wants the compound "instance_id:user_id" key; a bare id
+      // is silently ignored by _user_instance_filter.
+      clientFetch<SessionRow[]>(
+        `/api/dashboard/sessions${query}${separator}` +
+          `user_ids=${encodeURIComponent(user.key)}&limit=${SESSION_LIMIT}`,
+      )
+        .then((rows) => {
+          setUserSessions((current) => ({
+            ...current,
+            [user.key]: { status: "ok", rows },
+          }));
+        })
+        .catch((error: unknown) => {
+          setUserSessions((current) => ({
+            ...current,
+            [user.key]: {
+              status: "error",
+              message: error instanceof Error ? error.message : "Failed to load sessions",
+            },
+          }));
+        });
+    }
+  }, [target, query, users, flipped, listsExpanded]);
 
   if (target === "avg-session") {
     return (
@@ -173,6 +190,7 @@ export function KpiModal({
             rows={allSessions.rows}
             timeZone={timeZone}
             capped={isCapped(allSessions.rows, SESSION_LIMIT)}
+            defaultExpanded={listsExpanded}
           />
         )}
       </Modal>
@@ -200,15 +218,15 @@ export function KpiModal({
             </thead>
             <tbody className="divide-y divide-border">
               {users.map((user) => {
-                const open = expanded.has(user.key);
+                const open = isOpen(user.key);
                 const detail = userSessions[user.key];
                 return (
                   <Fragment key={user.key}>
-                    <ExpandRow open={open} onToggle={() => toggleUser(user)}>
+                    <ExpandRow open={open} onToggle={() => toggle(user.key)}>
                       <td className="py-1">
                         <Chevron
                           open={open}
-                          onToggle={() => toggleUser(user)}
+                          onToggle={() => toggle(user.key)}
                           label={`Sessions for ${user.name}`}
                         />
                         {user.name}

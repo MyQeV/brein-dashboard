@@ -46,6 +46,7 @@ export function StatTile({
   delta,
   deltaLabel,
   sparkline,
+  wideSparkline = false,
   hero = false,
   onClick,
 }: {
@@ -57,6 +58,12 @@ export function StatTile({
   deltaLabel?: string;
   /** Per-period values, oldest first. */
   sparkline?: number[];
+  /**
+   * Draw the line under the number at the tile's full width, as the hero
+   * does, instead of the small trace beside it. For a series with hundreds
+   * of points — a year of daily peaks — 88px is a smudge.
+   */
+  wideSparkline?: boolean;
   /** The one number the page leads with: bigger, with a full-width area line. */
   hero?: boolean;
   /** Given, the tile becomes the button that opens its breakdown. */
@@ -96,18 +103,18 @@ export function StatTile({
             </span>
           )}
         </div>
-        {sparkline && !hero && (
+        {sparkline && !hero && !wideSparkline && (
           <Sparkline values={sparkline} className="ml-auto shrink-0" />
         )}
       </div>
-      {sparkline && hero && (
+      {sparkline && (hero || wideSparkline) && (
         <Sparkline
           values={sparkline}
           width={316}
-          height={44}
+          height={hero ? 44 : 36}
           area
           stretch
-          className="h-11 w-full"
+          className={cn("w-full", hero ? "h-11" : "h-9")}
         />
       )}
     </div>

@@ -11,6 +11,7 @@ import { formatDuration } from "@/lib/format";
 import { rowNumber } from "@/lib/rows";
 import type { MediaDrillRow } from "@/lib/types";
 import { useApi } from "@/lib/use-api";
+import { MODAL_LISTS_EXPANDED, useBooleanPreference } from "@/lib/use-preference";
 
 export type DrillTarget = { drillType: string; id: string; title: string };
 
@@ -36,6 +37,7 @@ export function DrillModal({
   // A user drill is one user's sessions, so the column would repeat the
   // dialog's own title on every row.
   const showUser = target.drillType !== "user";
+  const listsExpanded = useBooleanPreference(MODAL_LISTS_EXPANDED);
 
   const separator = query.startsWith("?") ? "&" : "?";
   const state = useApi<MediaDrillRow[]>(
@@ -73,6 +75,7 @@ export function DrillModal({
           timeZone={timeZone || "UTC"}
           showUser={showUser}
           capped={isCapped(rows as SessionRow[], DRILL_LIMIT)}
+          defaultExpanded={listsExpanded}
         />
       )}
     </Modal>

@@ -277,6 +277,7 @@ export function SessionsByDayTable({
   timeZone,
   showUser = true,
   capped = false,
+  defaultExpanded = false,
 }: {
   rows: SessionRow[];
   timeZone: string;
@@ -284,15 +285,20 @@ export function SessionsByDayTable({
   showUser?: boolean;
   /** The API returned its maximum, so these are the newest, not all of them. */
   capped?: boolean;
+  /** Every day starts open — the "modal lists" profile preference. */
+  defaultExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  // Memoised on the rows, not on `expanded`: a drill can hold 500 sessions,
+  // The days the user has flipped away from the default, not the open ones:
+  // that way "everything open" costs nothing at mount, and a preference that
+  // arrives a moment after the first render simply flips the untouched days.
+  const [flipped, setFlipped] = useState<ReadonlySet<string>>(new Set());
+  // Memoised on the rows, not on `flipped`: a drill can hold 500 sessions,
   // and each one costs an Intl date format to bucket. Without this, opening a
   // day re-bucketed the whole list.
   const days = useMemo(() => groupByDay(rows, timeZone), [rows, timeZone]);
 
   function toggle(key: string) {
-    setExpanded((current) => {
+    setFlipped((current) => {
       const next = new Set(current);
       if (!next.delete(key)) next.add(key);
       return next;
@@ -328,7 +334,7 @@ export function SessionsByDayTable({
                 (sum, row) => sum + (row.duration_seconds ?? 0),
                 0,
               );
-              const open = expanded.has(group.day);
+              const open = flipped.has(group.day) !== defaultExpanded;
               return (
                 <Fragment key={group.day}>
                   <ExpandRow open={open} onToggle={() => toggle(group.day)}>
