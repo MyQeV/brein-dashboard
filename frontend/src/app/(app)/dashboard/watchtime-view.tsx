@@ -11,6 +11,7 @@ import { StackedBar, type StackedDatum } from "@/components/charts/stacked-bar";
 import { StatTile } from "@/components/charts/stat-tile";
 import { DrillModal, type DrillTarget } from "@/components/drill-modal";
 import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/cn";
 import { formatCount, formatDuration, weekdayLabel } from "@/lib/format";
 import { watchTimePerDay } from "@/lib/per-day";
 import { type ApiRow, rowNumber, rowText } from "@/lib/rows";
@@ -109,8 +110,15 @@ export function WatchtimeView({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Row 1: the number the page leads with, and when it happens. */}
-      <div className="grid gap-4 lg:grid-cols-[22.5rem_minmax(0,1fr)] xl:grid-cols-[22.5rem_minmax(0,1fr)_18.75rem]">
+      {/* Row 1: the number the page leads with, and when it happens. The
+          weekday column only exists when the weekday card does: a one-day
+          range dropped the card and left its column as a hole. */}
+      <div
+        className={cn(
+          "grid gap-4 lg:grid-cols-[22.5rem_minmax(0,1fr)]",
+          multiDay && "xl:grid-cols-[22.5rem_minmax(0,1fr)_18.75rem]",
+        )}
+      >
         <StatTile
           hero
           label="Watch time"
