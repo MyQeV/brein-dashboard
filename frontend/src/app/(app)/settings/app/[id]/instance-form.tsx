@@ -6,24 +6,47 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
 import type { InstanceDetail } from "@/lib/types";
-import { deleteInstance, saveInstance, testInstance } from "../actions";
+import {
+  createInstance,
+  deleteInstance,
+  saveInstance,
+  testConnection,
+  testInstance,
+} from "../actions";
 
-export function InstanceForm({ instance }: { instance: InstanceDetail }) {
+type Props =
+  | { instance: InstanceDetail; serviceType?: undefined; serviceName?: undefined }
+  /** No instance yet: the form creates one, and only after its test passed. */
+  | { instance?: undefined; serviceType: string; serviceName: string };
+
+export function InstanceForm({ instance, serviceType, serviceName }: Props) {
   const router = useRouter();
-  const [label, setLabel] = useState(instance.label ?? "");
-  const [host, setHost] = useState(instance.host ?? "");
-  const [port, setPort] = useState(instance.port === null ? "" : String(instance.port));
+  const creating = instance === undefined;
+  const [label, setLabel] = useState(instance?.label ?? "");
+  const [host, setHost] = useState(instance?.host ?? "");
+  const [port, setPort] = useState(
+    instance?.port === undefined || instance.port === null ? "" : String(instance.port),
+  );
   const [apiKey, setApiKey] = useState("");
-  const [externalUrl, setExternalUrl] = useState(instance.external_url ?? "");
+  const [externalUrl, setExternalUrl] = useState(instance?.external_url ?? "");
   // Displayed one-based, stored zero-based. The Jinja form did the same but
   // its JSON sibling took the raw value, so the two disagreed by one.
-  const [order, setOrder] = useState(String((instance.sort_order ?? 0) + 1));
-  const [active, setActive] = useState(instance.active);
+  const [order, setOrder] = useState(String((instance?.sort_order ?? 0) + 1));
+  const [active, setActive] = useState(instance?.active ?? true);
 
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(
     null,
   );
+  // The connection a passing test was for. Save on a new app needs the
+  // current host, port and key to match it, so editing any of them after the
+  // test disables Save again until it is rerun.
+  const [verified, setVerified] = useState<string | null>(null);
+  const connection = `${host.trim()}|${port.trim()}|${apiKey}`;
+  const canTest =
+    host.trim() !== "" && (creating ? apiKey !== "" : instance.is_configured);
+  const canSave = creating ? verified === connection : true;
+
   const [pending, startTransition] = useTransition();
   const [testing, startTesting] = useTransition();
 
@@ -31,16 +54,27 @@ export function InstanceForm({ instance }: { instance: InstanceDetail }) {
     event.preventDefault();
     startTransition(async () => {
       const zeroBased = order.trim() ? String(Math.max(0, Number(order) - 1)) : "";
-      const result = await saveInstance(instance.id, {
+      const input = {
         label,
         host,
         port,
-        // Empty means untouched: keep the stored key.
+        // On an existing app, empty means untouched: keep the stored key.
         api_key: apiKey,
         external_url: externalUrl,
         sort_order: zeroBased,
         active,
-      });
+      };
+      if (creating) {
+        const result = await createInstance(serviceType, input);
+        if (result.ok) {
+          router.push("/settings/app");
+          router.refresh();
+        } else {
+          setMessage({ ok: false, text: result.error });
+        }
+        return;
+      }
+      const result = await saveInstance(instance.id, input);
       setMessage(
         result.ok ? { ok: true, text: "Saved." } : { ok: false, text: result.error },
       );
@@ -53,12 +87,17 @@ export function InstanceForm({ instance }: { instance: InstanceDetail }) {
 
   function onTest() {
     startTesting(async () => {
-      const result = await testInstance(instance.id);
+      const tested = connection;
+      const result = creating
+        ? await testConnection({ service_type: serviceType, host, port, api_key: apiKey })
+        : await testInstance(instance.id);
       setTestResult({ ok: result.ok, text: result.message });
+      setVerified(result.ok ? tested : null);
     });
   }
 
   function onDelete() {
+    if (creating) return;
     if (
       !window.confirm(`Delete "${instance.label ?? instance.id}"? This cannot be undone.`)
     ) {
@@ -73,11 +112,17 @@ export function InstanceForm({ instance }: { instance: InstanceDetail }) {
 
   return (
     <Card
-      title={`${instance.service_type} — ${instance.label ?? instance.id}`}
+      title={
+        creating
+          ? `New ${serviceName}`
+          : `${instance.service_type} — ${instance.label ?? instance.id}`
+      }
       actions={
-        <Button size="sm" variant="danger" onClick={onDelete} disabled={pending}>
-          Delete
-        </Button>
+        creating ? undefined : (
+          <Button size="sm" variant="danger" onClick={onDelete} disabled={pending}>
+            Delete
+          </Button>
+        )
       }
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
@@ -109,8 +154,8 @@ export function InstanceForm({ instance }: { instance: InstanceDetail }) {
           name="api_key"
           type="password"
           autoComplete="off"
-          placeholder={instance.api_key_masked || "Not set"}
-          help="Leave blank to keep the stored key."
+          placeholder={creating ? "Required" : instance.api_key_masked || "Not set"}
+          help={creating ? undefined : "Leave blank to keep the stored key."}
           value={apiKey}
           onChange={(event) => setApiKey(event.target.value)}
           disabled={pending}
@@ -145,14 +190,18 @@ export function InstanceForm({ instance }: { instance: InstanceDetail }) {
         </label>
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" disabled={pending}>
-            {pending ? "Saving…" : "Save"}
+          <Button
+            type="submit"
+            disabled={pending || !canSave}
+            title={canSave ? undefined : "Test the connection first"}
+          >
+            {pending ? (creating ? "Adding…" : "Saving…") : creating ? "Add app" : "Save"}
           </Button>
           <Button
             variant="secondary"
             onClick={onTest}
-            disabled={testing || !instance.is_configured}
-            title={instance.is_configured ? undefined : "Set a host and API key first"}
+            disabled={testing || !canTest}
+            title={canTest ? undefined : "Set a host and API key first"}
           >
             {testing ? "Testing…" : "Test connection"}
           </Button>

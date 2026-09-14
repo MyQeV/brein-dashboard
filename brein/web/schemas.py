@@ -10,11 +10,6 @@ class ServiceConfigBody(BaseModel):
     api_key: str = ""
 
 
-class InstanceCreateBody(BaseModel):
-    service_type: str = ""
-    label: str | None = None
-
-
 class InstanceUpdateBody(BaseModel):
     host: str | None = None
     port: int | None = None
@@ -44,6 +39,21 @@ class InstanceUpdateBody(BaseModel):
         if parsed.scheme.lower() not in ("http", "https"):
             raise ValueError("external_url must start with http:// or https://")
         return trimmed
+
+
+class InstanceCreateBody(InstanceUpdateBody):
+    """The connection may come along with the type: it is tested before it is stored."""
+
+    service_type: str = ""
+
+
+class InstanceProbeBody(BaseModel):
+    """A connection to try before any instance exists."""
+
+    service_type: str = ""
+    host: str = ""
+    port: int | None = None
+    api_key: str = ""
 
 
 class UsersPolicyBody(BaseModel):

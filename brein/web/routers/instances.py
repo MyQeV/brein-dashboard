@@ -20,7 +20,12 @@ from brein.integrations import plex as plex_integration
 from brein.integrations.registry import test_service as integration_test_service
 from brein.web import auth as web_auth
 from brein.web import instance_settings
-from brein.web.schemas import InstanceCreateBody, InstanceUpdateBody, User
+from brein.web.schemas import (
+    InstanceCreateBody,
+    InstanceProbeBody,
+    InstanceUpdateBody,
+    User,
+)
 from brein.store import service_config as store_service_config
 from brein.store import instances as store_instances
 
@@ -37,20 +42,66 @@ async def api_list_instances(current_user: CurrentUser):
     return {"instances": await store_instances.list_instances()}
 
 
-@router.post("/api/instances")
-async def api_create_instance(body: InstanceCreateBody, current_user: AdminUser):
-    """Create a new instance. Returns the new integer instance id."""
+def _connection_fields(host: str | None, api_key: str | None) -> tuple[str, str]:
+    """Both or neither: a host without a key (or the reverse) cannot be tested."""
+    host = (host or "").strip()
+    api_key = (api_key or "").strip()
+    if bool(host) != bool(api_key):
+        raise HTTPException(status_code=400, detail="Host and API key are both required")
+    return host, api_key
+
+
+@router.post("/api/instances/test")
+async def api_probe_connection(body: InstanceProbeBody, current_user: AdminUser):
+    """Try a connection before any instance exists.
+
+    The add-app form refuses to save until this has passed, so nothing is
+    stored that has never answered.
+    """
     if body.service_type not in store_service_config.SERVICE_META:
         raise HTTPException(status_code=404, detail="Unknown service_type")
-    new_id = await store_instances.create_instance(
-        body.service_type,
-        label=body.label,
-    )
-    async with get_session_factory()() as s:
-        await reconcile_scheduled_tasks(s)
-    # Nothing to connect to yet — it has no host or key until it is saved —
-    # but this keeps the registry the single place that decides.
-    await ws_registry.restart(new_id)
+    host, api_key = _connection_fields(body.host, body.api_key)
+    if not host:
+        raise HTTPException(status_code=400, detail="Host and API key are both required")
+    base_url = store_instances.build_base_url(host, body.port, body.service_type)
+    ok, message = await integration_test_service(body.service_type, base_url, api_key)
+    return {"ok": ok, "message": message}
+
+
+@router.post("/api/instances")
+async def api_create_instance(body: InstanceCreateBody, current_user: AdminUser):
+    """Create a new instance. Returns the new integer instance id.
+
+    With a host and key the connection is tested first and a failure refuses
+    the create: the form only saves after its own test passed, and this holds
+    API callers to the same rule. Without them an unconfigured instance is
+    created as before.
+    """
+    if body.service_type not in store_service_config.SERVICE_META:
+        raise HTTPException(status_code=404, detail="Unknown service_type")
+    host, api_key = _connection_fields(body.host, body.api_key)
+    if host:
+        base_url = store_instances.build_base_url(host, body.port, body.service_type)
+        ok, message = await integration_test_service(body.service_type, base_url, api_key)
+        if not ok:
+            raise HTTPException(
+                status_code=400, detail=f"Connection test failed: {message}"
+            )
+    try:
+        new_id = await store_instances.create_instance(
+            body.service_type,
+            label=body.label,
+            host=host,
+            port=body.port,
+            api_key=api_key,
+            external_url=body.external_url or "",
+            sort_order=body.sort_order,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if body.active is False:
+        await store_instances.update_instance(new_id, active=False)
+    await _connection_changed(new_id)
     return {"id": new_id, "ok": True}
 
 
@@ -63,27 +114,13 @@ async def api_get_instance(instance_id: int, current_user: CurrentUser):
     return inst
 
 
-@router.put("/api/instances/{instance_id}")
-async def api_put_instance(
-    instance_id: int, body: InstanceUpdateBody, current_user: AdminUser
-):
-    """Update instance; omit or null keeps existing."""
-    inst = await store_instances.get_instance(instance_id)
-    if not inst:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    try:
-        await store_instances.update_instance(
-            instance_id,
-            host=body.host,
-            port=body.port,
-            api_key=body.api_key,
-            label=body.label,
-            external_url=body.external_url,
-            active=body.active,
-            sort_order=body.sort_order,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+async def _connection_changed(instance_id: int) -> None:
+    """What a saved connection sets in motion.
+
+    Shared by create and update: record the media server's identity, queue
+    the first library scan, refresh the scheduled-task names and restart the
+    live listener with the new host and key.
+    """
     cfg = await store_instances.get_instance_connection_config(instance_id)
     if cfg:
         service_type, base_url, api_key = cfg
@@ -139,6 +176,30 @@ async def api_put_instance(
     # started at boot would keep using the old ones — reconnecting with a
     # stale token indefinitely, or polling a server that was deactivated.
     await ws_registry.restart(instance_id)
+
+
+@router.put("/api/instances/{instance_id}")
+async def api_put_instance(
+    instance_id: int, body: InstanceUpdateBody, current_user: AdminUser
+):
+    """Update instance; omit or null keeps existing."""
+    inst = await store_instances.get_instance(instance_id)
+    if not inst:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    try:
+        await store_instances.update_instance(
+            instance_id,
+            host=body.host,
+            port=body.port,
+            api_key=body.api_key,
+            label=body.label,
+            external_url=body.external_url,
+            active=body.active,
+            sort_order=body.sort_order,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await _connection_changed(instance_id)
     return {"ok": True}
 
 
