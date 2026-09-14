@@ -225,8 +225,11 @@ export function CalendarView() {
 
   const days = month ? gridDays(month) : [];
   const currentMonth = month ? month.getUTCMonth() : -1;
+  // Today stays in the agenda even with nothing on it: the day the user is
+  // orienting by must not simply be missing from the list.
   const agendaDays = days.filter(
-    (day) => Number(day.slice(5, 7)) - 1 === currentMonth && byDate.has(day),
+    (day) =>
+      Number(day.slice(5, 7)) - 1 === currentMonth && (byDate.has(day) || day === today),
   );
 
   return (
@@ -294,15 +297,16 @@ export function CalendarView() {
                   <li key={day}>
                     <h3
                       className={cn(
-                        "sticky top-0 rounded-sm bg-surface-2 px-2 py-1.5 text-sm font-semibold",
-                        isToday && "text-accent",
+                        "sticky top-0 rounded-sm px-2 py-1.5 text-sm font-semibold",
+                        isToday ? "bg-accent text-accent-ink" : "bg-surface-2",
                       )}
                     >
                       {dayHeading(day)}
-                      {isToday && (
-                        <span className="ml-2 text-xs font-normal text-muted">Today</span>
-                      )}
+                      {isToday && <span className="ml-2 text-xs font-normal">Today</span>}
                     </h3>
+                    {isToday && !byDate.has(day) && (
+                      <p className="px-2 py-2 text-sm text-muted">Nothing scheduled.</p>
+                    )}
                     <ul className="divide-y divide-border">
                       {(byDate.get(day) ?? []).map((event) => (
                         <li
@@ -361,16 +365,19 @@ export function CalendarView() {
                   className={cn(
                     "min-h-24 bg-surface p-1 align-top",
                     outside && "opacity-40",
-                    isToday && "ring-1 ring-accent ring-inset",
+                    isToday && "bg-accent/10 ring-2 ring-accent ring-inset",
                   )}
                 >
-                  <div
-                    className={cn(
-                      "mb-1 text-right text-xs tabular-nums",
-                      isToday ? "font-semibold text-accent" : "text-muted",
-                    )}
-                  >
-                    {Number(day.slice(8, 10))}
+                  <div className="mb-1 flex justify-end text-xs tabular-nums">
+                    <span
+                      className={cn(
+                        isToday
+                          ? "inline-flex size-5 items-center justify-center rounded-full bg-accent font-semibold text-accent-ink"
+                          : "text-muted",
+                      )}
+                    >
+                      {Number(day.slice(8, 10))}
+                    </span>
                   </div>
                   <ul className="flex flex-col gap-0.5">
                     {events.map((event) => (
