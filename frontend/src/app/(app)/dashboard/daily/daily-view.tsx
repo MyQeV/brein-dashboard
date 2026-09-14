@@ -166,11 +166,6 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
     };
   }, [rows]);
 
-  const perUserDay = useMemo(
-    () => [...rows].sort((a, b) => b.seconds - a.seconds).slice(0, 25),
-    [rows],
-  );
-
   // Hidden users are dropped from the columns and the bars rescale to what is
   // left, the way toggling a Chart.js legend entry behaved.
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
@@ -397,55 +392,56 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
           26rem; the titles on the right are what run long, so they get the
           rest of the row. */}
       <div className="grid gap-4 lg:grid-cols-[26rem_minmax(0,1fr)]">
-        <Card
-          title="Per user, per day"
-          actions={
-            rows.length > perUserDay.length ? (
-              <span className="text-xs text-muted">
-                top {perUserDay.length} of {rows.length}
-              </span>
-            ) : undefined
-          }
-        >
-          {perUserDay.length === 0 ? (
+        <Card title="Per user, per day">
+          {stacks.length === 0 ? (
             <p className="py-4 text-sm text-muted">
               No playback recorded for this range.
             </p>
           ) : (
+            // The same order as the chart: days left to right, and within a
+            // day the heaviest viewer first — a flat list ranked by time
+            // mixed the days together and capped at twenty-five rows, so a
+            // quiet day's viewers never appeared at all.
             <ul className="max-h-[32rem] overflow-y-auto text-sm">
-              {perUserDay.map((row) => {
-                // Compared by key, not display name: two accounts can share a
-                // name, and both rows would then highlight for one fetch.
-                const isSelected =
-                  selected?.key === row.userKey && selected.date === row.date;
-                const color =
-                  legend.find((entry) => entry.key === row.userKey)?.color ?? OTHER_COLOR;
-                return (
-                  <li key={`${row.date}-${row.userKey}`}>
-                    <button
-                      type="button"
-                      onClick={() => loadDetail(row)}
-                      className={cn(
-                        "grid w-full grid-cols-[4rem_0.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2",
-                        isSelected && "bg-surface-2",
-                      )}
-                    >
-                      <span className="tabular-nums text-muted">
-                        {dayLabel(row.date)}
-                      </span>
-                      <span
-                        aria-hidden="true"
-                        className="size-2 rounded-full"
-                        style={{ background: color }}
-                      />
-                      <span className="truncate">{row.userName}</span>
-                      <span className="tabular-nums text-muted">
-                        {formatDuration(row.seconds)}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
+              {stacks.map((stack) => (
+                <li key={stack.date}>
+                  <div className="sticky top-0 flex items-baseline justify-between bg-surface px-2 pt-2 pb-1 text-xs text-muted">
+                    <span className="tabular-nums">{dayLabel(stack.date)}</span>
+                    <span className="tabular-nums">{formatDuration(stack.total)}</span>
+                  </div>
+                  <ul>
+                    {stack.segments.map((segment) => {
+                      // Compared by key, not display name: two accounts can
+                      // share a name, and both rows would then highlight for
+                      // one fetch.
+                      const isSelected =
+                        selected?.key === segment.key && selected.date === stack.date;
+                      return (
+                        <li key={segment.key}>
+                          <button
+                            type="button"
+                            onClick={() => loadSegment(stack.date, segment)}
+                            className={cn(
+                              "grid w-full grid-cols-[0.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2",
+                              isSelected && "bg-surface-2",
+                            )}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className="size-2 rounded-full"
+                              style={{ background: segment.color }}
+                            />
+                            <span className="truncate">{segment.name}</span>
+                            <span className="tabular-nums text-muted">
+                              {formatDuration(segment.seconds)}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </li>
+              ))}
             </ul>
           )}
         </Card>
