@@ -14,6 +14,7 @@ calculations.
 ### Now playing
 Real-time playback state pushed to the UI via WebSocket. Updates every 10
 seconds — no page refresh needed.
+<img width="1901" height="331" alt="image" src="https://github.com/user-attachments/assets/045603c9-4018-4b92-9b18-602d7f7bcd77" />
 
 ### Release calendar (Sonarr/Radarr)
 Unified calendar view of upcoming and recently released content pulled from
