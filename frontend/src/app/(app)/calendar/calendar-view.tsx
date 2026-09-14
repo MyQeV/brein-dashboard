@@ -67,6 +67,21 @@ function gridDays(month: Date): string[] {
 
 const WEEKDAY_HEADS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/** "Wed 2 Sep" — the agenda's day heading, read in UTC like the grid. */
+function dayHeading(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
+}
+
+/** A stable key for an entry within its day. */
+function eventKey(event: CalendarEvent): string {
+  return `${event.source}-${event.instance_id}-${event.title}-${event.subtitle ?? ""}`;
+}
+
 /**
  * Where a calendar entry opens: the series or film in the app that manages it.
  *
@@ -86,6 +101,23 @@ function eventUrl(event: CalendarEvent): string | undefined {
     return `${base}/movie/${encodeURIComponent(String(event.tmdb_id))}`;
   }
   return undefined;
+}
+
+/** The title as a link into Sonarr/Radarr when the entry has one, plain text otherwise. */
+function EventTitle({ event, className }: { event: CalendarEvent; className?: string }) {
+  const href = eventUrl(event);
+  return href ? (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn("hover:text-accent hover:underline", className)}
+    >
+      {event.title}
+    </a>
+  ) : (
+    <span className={className}>{event.title}</span>
+  );
 }
 
 export function CalendarView() {
@@ -193,18 +225,31 @@ export function CalendarView() {
 
   const days = month ? gridDays(month) : [];
   const currentMonth = month ? month.getUTCMonth() : -1;
+  const agendaDays = days.filter(
+    (day) => Number(day.slice(5, 7)) - 1 === currentMonth && byDate.has(day),
+  );
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" onClick={() => shiftMonth(-1)}>
-          Previous
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-label="Previous month"
+          onClick={() => shiftMonth(-1)}
+        >
+          ‹
         </Button>
-        <span className="min-w-40 text-center text-sm font-medium">
+        <span className="min-w-36 text-center text-sm font-medium">
           {month ? monthLabel(month) : " "}
         </span>
-        <Button size="sm" variant="secondary" onClick={() => shiftMonth(1)}>
-          Next
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-label="Next month"
+          onClick={() => shiftMonth(1)}
+        >
+          ›
         </Button>
 
         <fieldset className="ml-auto flex gap-1 border-0 p-0">
@@ -232,8 +277,69 @@ export function CalendarView() {
         </p>
       )}
 
+      {/* Below md the month is an agenda: the seven-column grid needs 640px
+          and on a phone scrolled sideways with four columns showing and
+          every title chopped. Only days with entries are listed. */}
       {state.status === "ok" && month && (
-        <div className="overflow-x-auto">
+        <div className="md:hidden">
+          {agendaDays.length === 0 ? (
+            <p className="py-6 text-sm text-muted">
+              Nothing scheduled in {monthLabel(month)}.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {agendaDays.map((day) => {
+                const isToday = day === today;
+                return (
+                  <li key={day}>
+                    <h3
+                      className={cn(
+                        "sticky top-0 rounded-sm bg-surface-2 px-2 py-1.5 text-sm font-semibold",
+                        isToday && "text-accent",
+                      )}
+                    >
+                      {dayHeading(day)}
+                      {isToday && (
+                        <span className="ml-2 text-xs font-normal text-muted">Today</span>
+                      )}
+                    </h3>
+                    <ul className="divide-y divide-border">
+                      {(byDate.get(day) ?? []).map((event) => (
+                        <li
+                          key={eventKey(event)}
+                          className="flex items-start gap-2 px-2 py-2"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              "mt-1.5 size-2 shrink-0 rounded-full",
+                              STATUS_DOT[statusOf(event)],
+                            )}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <EventTitle event={event} className="block text-sm" />
+                            {event.subtitle && (
+                              <span className="block text-xs text-muted">
+                                {event.subtitle}
+                              </span>
+                            )}
+                          </span>
+                          <span className="shrink-0 text-xs text-muted capitalize">
+                            {event.source}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {state.status === "ok" && month && (
+        <div className="hidden overflow-x-auto md:block">
           <div className="grid min-w-160 grid-cols-7 gap-px rounded-lg border border-border bg-border">
             {WEEKDAY_HEADS.map((head) => (
               <div
@@ -269,7 +375,7 @@ export function CalendarView() {
                   <ul className="flex flex-col gap-0.5">
                     {events.map((event) => (
                       <li
-                        key={`${event.source}-${event.instance_id}-${event.title}-${event.subtitle ?? ""}`}
+                        key={eventKey(event)}
                         className="flex items-center gap-1"
                         title={`${event.title}${event.subtitle ? ` — ${event.subtitle}` : ""}`}
                       >
@@ -280,18 +386,7 @@ export function CalendarView() {
                             STATUS_DOT[statusOf(event)],
                           )}
                         />
-                        {eventUrl(event) ? (
-                          <a
-                            href={eventUrl(event)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="truncate text-[11px] hover:text-accent hover:underline"
-                          >
-                            {event.title}
-                          </a>
-                        ) : (
-                          <span className="truncate text-[11px]">{event.title}</span>
-                        )}
+                        <EventTitle event={event} className="truncate text-[11px]" />
                       </li>
                     ))}
                   </ul>
