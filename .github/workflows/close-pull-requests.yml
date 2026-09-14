@@ -1,0 +1,31 @@
+name: Close pull requests
+
+# This project takes bug reports and suggestions as issues, not pull
+# requests (see CONTRIBUTING.md). Any PR from someone other than the owner
+# gets a comment pointing there and is closed.
+#
+# pull_request_target rather than pull_request so the job has a token that
+# may comment on and close PRs from forks. It never checks out the PR's
+# code, which is what makes that token safe to hold here.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close:
+    if: github.event.pull_request.user.login != github.repository_owner
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          gh pr close "$PR" --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BODY: >-
+            Thanks for taking the time, but this project does not accept pull
+            requests. If you found a bug or have a suggestion, please open an
+            issue instead: https://github.com/${{ github.repository }}/issues/new

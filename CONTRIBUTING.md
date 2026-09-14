@@ -1,8 +1,15 @@
 # Contributing to Brein
 
-Thanks for considering a contribution. This project is AGPL-3.0; by
-submitting a change you agree it is contributed under that licence. No
-sign-off / DCO is required.
+This project does not accept pull requests. Any PR is closed automatically
+by a workflow, so please don't spend time on one.
+
+What is welcome: **issues**. Bug reports, questions and suggestions all go to
+<https://github.com/MyQeV/brein-dashboard/issues/new>. For a bug, include
+what you did, what happened, what you expected, and the relevant lines from
+the log viewer (Settings → Logs) or `docker compose logs brein`.
+
+The sections below are for running the app from source and reproducing a
+problem before reporting it.
 
 ## Running the app
 
@@ -71,23 +78,3 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm exec biome check src
 ```
-
-## Pre-commit
-
-```bash
-pre-commit install
-pre-commit run --all-files
-```
-
-This runs `ruff` (lint, `--fix`), `ruff-format`, `mypy`, and `detect-secrets`,
-plus the usual whitespace/YAML/JSON/merge-conflict/large-file hooks — see
-[`.pre-commit-config.yaml`](.pre-commit-config.yaml) for the exact list.
-
-## Pull requests
-
-- Keep a PR small and focused on one topic — separate refactors from
-  behaviour changes.
-- Add or update tests for any behaviour change.
-- CI (backend tests, frontend typecheck + Biome, Docker build) must be
-  green before merge.
-- Describe *why* the change is needed, not just what it does.
