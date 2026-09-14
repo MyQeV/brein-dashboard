@@ -257,8 +257,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 def _setup_gate_allowed(method: str, path: str) -> bool:
     """True if path is allowed when no users exist (setup mode)."""
-    if method == "GET" and path == "/setup":
-        return True
     if method == "GET" and path == "/api/setup-status":
         return True
     if method == "POST" and path == "/api/setup":
@@ -309,7 +307,12 @@ async def https_redirect_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def setup_gate_middleware(request: Request, call_next):
-    """When no users exist, allow only /setup, POST /api/setup, and /static/*; else redirect.
+    """When no users exist, allow only setup-status, POST /api/setup and /static/*; else 401.
+
+    401 rather than a redirect: /setup is a page the frontend serves, not a
+    route here, and a 302 to it sent the frontend's own server-side fetches
+    into this API's 404. The frontend already treats 401 as "go to login",
+    and login sends an unclaimed instance on to the setup form.
 
     Fails closed. If the user count cannot be read the gate cannot know whether
     the instance is still unclaimed, and serving the app anyway would present a
@@ -321,7 +324,7 @@ async def setup_gate_middleware(request: Request, call_next):
         return await call_next(request)
     try:
         if await store_users.count_users() == 0:
-            return RedirectResponse(url="/setup", status_code=302)
+            return JSONResponse({"detail": "Setup required"}, status_code=401)
     except Exception:
         log.exception("setup_gate_middleware could not read the user count")
         return JSONResponse(

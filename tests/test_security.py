@@ -361,3 +361,29 @@ async def test_login_issues_a_csrf_cookie(app):
     source = inspect.getsource(auth_router)
     assert "_set_csrf_cookie" in source
     assert source.count("_set_csrf_cookie(request, response)") >= 2
+
+
+# ── Setup gate ────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_unclaimed_instance_answers_api_calls_with_401_not_a_redirect(app):
+    """With no users yet, the gate must refuse API calls, not redirect them.
+
+    /setup is a page the frontend serves; this API has no such route. A 302
+    there sent the frontend's server-side fetches into the API's own 404,
+    and the browser's session probe (POST /refresh) to a page that answered
+    200 — so a fresh install crashed on its first request instead of landing
+    on the setup form. 401 is the answer the frontend already understands:
+    it goes to login, and login points at setup.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    with patch(
+        "brein.web.app.store_users.count_users", new_callable=AsyncMock, return_value=0
+    ):
+        async with _client(app) as c:
+            r = await c.get("/api/instances")
+    assert r.status_code == 401
+    assert "location" not in r.headers
+    assert "setup" in (r.json().get("detail") or "").lower()
