@@ -1,11 +1,11 @@
 # Brein-dashboard
 
+This is part of my private brein repository that i wanted to set public.
+
 Centralized dashboard and management hub for your media stack. 
 FastAPI + PostgreSQL API on port **8001**, Next.js frontend on port **3100**.
 
-This is part of my private brein repository that i wanted to set public.
-
-## What Brein does
+## What Brein-dashboard does
 
 ### Dashboard
 Live overview of your Emby, Jellyfin or Plex server: total plays, watch time,
