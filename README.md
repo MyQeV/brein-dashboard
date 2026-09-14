@@ -17,7 +17,7 @@ Most charts and KPI's are clickable to show more data in a modal.
 <img width="1693" height="301" alt="image" src="https://github.com/user-attachments/assets/d8be9306-c0e2-4b3e-bcff-61726f24f8f4" />
 
 ### Now playing
-Real-time playback state pushed to the UI via WebSocket. Updates every 10
+Real-time playback state pushed to the UI. Updates every 10
 seconds.
 <img width="1901" height="331" alt="image" src="https://github.com/user-attachments/assets/045603c9-4018-4b92-9b18-602d7f7bcd77" />
 
