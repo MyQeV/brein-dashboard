@@ -7,7 +7,7 @@ same moment, who has stopped watching anywhere, what nobody has ever played.
 
 import logging
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
@@ -100,6 +100,8 @@ async def get_concurrency_by_day(
             **_utc_window_params(scan_from, scan_to),
             "range_start": start_date,
             "range_end": end_date,
+            "midnight_from": datetime.fromisoformat(start_date),
+            "midnight_to": datetime.fromisoformat(end_date),
             "tz": brein_config.TIMEZONE,
         }
     )
@@ -113,6 +115,16 @@ async def get_concurrency_by_day(
                      + make_interval(secs => duration_seconds) AS at,
                    -1 AS delta
             FROM sessions
+            UNION ALL
+            -- A weightless event at each requested day's local midnight, so
+            -- the running count is sampled there. Without it a day is only
+            -- observed at its own starts and ends, and the end of a stream
+            -- that began the night before reads the count *after* it was
+            -- subtracted — a day whose only event is that end reported 0.
+            SELECT (midnight AT TIME ZONE :tz AT TIME ZONE 'UTC') AS at, 0 AS delta
+            FROM generate_series(CAST(:midnight_from AS timestamp),
+                                 CAST(:midnight_to AS timestamp),
+                                 interval '1 day') AS midnight
         ),
         running AS (
             SELECT at,

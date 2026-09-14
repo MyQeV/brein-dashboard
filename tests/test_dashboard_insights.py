@@ -8,11 +8,13 @@ drops a user, a filter that counts a title twice — so they are exercised here
 with rows placed to make those mistakes visible.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text
 
+from brein import config as brein_config
 from brein.store import dashboard_insights as insights
 from tests.conftest import requires_db
 
@@ -189,17 +191,24 @@ class TestConcurrency:
         """A stream running at 00:30 counts, even though it started yesterday.
 
         Bounding the scan exactly at the range start dropped it, and the first
-        day of every range opened with an artificially empty chart.
+        day of every range opened with an artificially empty chart. The start
+        is placed relative to the app timezone's midnight so the stream crosses
+        the day boundary whatever TZ the suite runs under — a fixed UTC time
+        only crossed it in some zones, and in the others the test passed
+        without exercising the case.
         """
         await _reset(session)
         await _instances(session)
-        yesterday = (date.fromisoformat(DAY) - timedelta(days=1)).isoformat()
+        midnight = datetime.fromisoformat(DAY).replace(
+            tzinfo=ZoneInfo(brein_config.TIMEZONE)
+        )
+        started = (midnight - timedelta(minutes=30)).astimezone(timezone.utc)
         await _emby_session(
             session,
             instance_id=INSTANCE_A,
             user_id=1,
             item_id=1,
-            start=f"{yesterday}T23:30:00.0000000Z",
+            start=started.strftime("%Y-%m-%dT%H:%M:%S.0000000Z"),
             seconds=3600,
         )
         await session.commit()
