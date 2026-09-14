@@ -11,6 +11,8 @@ FastAPI + PostgreSQL API on port **8001**, Next.js frontend on port **3100**.
 Live overview of your Emby, Jellyfin or Plex server: total plays, watch time,
 per-user breakdowns, and recent activity. Stats are cached and refreshed
 periodically.
+
+Most charts and KPI's are clickable to show more data in a modal.
 <img width="1690" height="836" alt="image" src="https://github.com/user-attachments/assets/4f75ea5d-b834-4244-8390-f13b15d516c6" />
 <img width="1693" height="301" alt="image" src="https://github.com/user-attachments/assets/d8be9306-c0e2-4b3e-bcff-61726f24f8f4" />
 
