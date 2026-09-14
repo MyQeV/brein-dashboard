@@ -65,7 +65,7 @@ export function DataTable<Row extends Record<string, unknown>>({
   }
 
   return (
-    <div className={cn(!cards && "overflow-x-auto")}>
+    <div className="overflow-x-auto">
       {/* The cards hide the header row, and with it the sort links; this
           strip is where sorting lives on a phone. */}
       {cards && basePath && (

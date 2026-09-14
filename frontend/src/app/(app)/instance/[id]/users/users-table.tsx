@@ -128,6 +128,7 @@ export function UsersTable({
     const active = sort.key === column.key;
     return (
       <button
+        key={column.key}
         type="button"
         onClick={() => toggleSort(column.key)}
         className={cn("cursor-pointer hover:text-text", className)}

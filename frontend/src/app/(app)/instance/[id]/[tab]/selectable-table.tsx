@@ -140,7 +140,7 @@ export function SelectableArrTable({
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody className={CARD_TABLE.tbody}>
           {rows.map((row, index) => {
             const id = typeof row.id === "number" ? row.id : null;
             const checked = id !== null && selected.has(id);
@@ -157,9 +157,11 @@ export function SelectableArrTable({
                   if (window.getSelection()?.toString()) return;
                   toggle(id);
                 }}
+                // Not CARD_TABLE.row: that stacks the cells, and here the
+                // checkbox and the title share the first line.
                 className={cn(
-                  CARD_TABLE.row,
-                  "last:border-0 max-lg:flex-row max-lg:flex-wrap max-lg:gap-x-3",
+                  "border-b border-border last:border-0",
+                  "max-lg:flex max-lg:flex-wrap max-lg:gap-x-3 max-lg:gap-y-1 max-lg:py-3",
                   id !== null && "cursor-pointer hover:bg-border/30",
                   checked && "bg-accent/10",
                 )}

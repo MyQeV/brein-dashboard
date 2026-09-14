@@ -189,7 +189,7 @@ export function QueueView({
               {queue.items.map((item) => (
                 <tr key={item.id} className={CARD_TABLE.row}>
                   <td
-                    className={cn(CARD_TABLE.lead, "max-w-md truncate max-lg:max-w-none")}
+                    className={cn(CARD_TABLE.lead, "lg:max-w-md lg:truncate")}
                     title={item.name}
                   >
                     {item.name}
