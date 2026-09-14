@@ -382,6 +382,26 @@ class TestInstanceImage:
         r = client.get("/api/instances/1/image?item_id=abc123&tag=../bad&type=Primary")
         assert r.status_code == 400
 
+    def test_emby_image_tag_with_ticks_suffix_is_accepted(self, client):
+        # Emby (and Jellyfin) tags are "<md5>_<ticks>", not bare hex. Rejecting
+        # the underscore returned 400 for every movie and Live TV poster on the
+        # Now playing page; episodes only worked because they use the series
+        # poster with an empty tag.
+        import base64
+
+        fake_bytes = base64.b64encode(b"imgdata").decode()
+        with (
+            patch(STORE_CFG, new_callable=AsyncMock) as m_cfg,
+            patch(f"{CACHE}.get_cached", new_callable=AsyncMock) as m_get,
+        ):
+            m_cfg.return_value = CFG_EMBY
+            m_get.return_value = {"b64": fake_bytes, "content_type": "image/jpeg"}
+            r = client.get(
+                "/api/instances/1/image?item_id=150989"
+                "&tag=b2cc88472f0f11cf1cc1fca4f1cb759c_639023739256999581&type=Primary"
+            )
+        assert r.status_code == 200
+
     def test_400_invalid_type(self, client):
         r = client.get("/api/instances/1/image?item_id=abc123&type=BadType")
         assert r.status_code == 400

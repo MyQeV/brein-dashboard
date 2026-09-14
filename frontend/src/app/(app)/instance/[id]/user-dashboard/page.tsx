@@ -68,7 +68,7 @@ export default async function UserDashboardPage(
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-3">
             <StatTile label="Plays" value={formatCount(data.stats.plays)} />
             <StatTile
               label="Watch time"

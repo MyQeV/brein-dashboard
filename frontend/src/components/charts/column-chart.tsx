@@ -160,7 +160,10 @@ export function ColumnChart({
         style={{ gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))` }}
       >
         {data.map((datum) => (
-          <span key={datum.id} className="truncate text-center tabular-nums">
+          <span
+            key={datum.id}
+            className="overflow-visible whitespace-nowrap text-center tabular-nums"
+          >
             {datum.axisLabel ?? datum.label}
           </span>
         ))}

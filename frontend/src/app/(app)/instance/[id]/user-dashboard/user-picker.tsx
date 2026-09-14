@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CONTROL_HEIGHT } from "@/components/ui/control";
 
 export function UserPicker({
   basePath,
@@ -51,7 +52,7 @@ export function UserPicker({
               // page, and making them press Apply as well is friction.
               apply({ user_id: next, start: from, end: to });
             }}
-            className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           >
             <option value="">Choose a user…</option>
             {users.map((user) => (
@@ -68,7 +69,7 @@ export function UserPicker({
             type="date"
             value={from}
             onChange={(event) => setFrom(event.target.value)}
-            className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
@@ -77,7 +78,7 @@ export function UserPicker({
             type="date"
             value={to}
             onChange={(event) => setTo(event.target.value)}
-            className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           />
         </label>
 

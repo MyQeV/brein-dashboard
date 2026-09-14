@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CONTROL_HEIGHT } from "@/components/ui/control";
 import { formatBytes } from "@/lib/format";
 import type { DownloadQueue } from "@/lib/types";
 import {
@@ -96,7 +97,7 @@ export function QueueView({
                   value={pauseMinutes}
                   inputMode="numeric"
                   onChange={(event) => setPauseMinutes(event.target.value)}
-                  className="h-8 w-24 rounded-md border border-border bg-bg px-2 text-sm"
+                  className={`${CONTROL_HEIGHT.sm} w-24 rounded-md border border-border bg-bg px-2 text-sm`}
                 />
                 <Button
                   size="sm"
@@ -124,7 +125,7 @@ export function QueueView({
                 value={limit}
                 inputMode="numeric"
                 onChange={(event) => setLimit(event.target.value)}
-                className="h-8 w-32 rounded-md border border-border bg-bg px-2 text-sm"
+                className={`${CONTROL_HEIGHT.sm} w-32 rounded-md border border-border bg-bg px-2 text-sm`}
               />
               <Button
                 size="sm"

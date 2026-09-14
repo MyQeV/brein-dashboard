@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CONTROL_HEIGHT } from "@/components/ui/control";
 import { Spinner } from "@/components/ui/spinner";
 import { clientFetch } from "@/lib/client-fetch";
 import { PAGE_SIZES } from "@/lib/params";
@@ -129,7 +130,7 @@ export function ListPreferences() {
                   value={value}
                   disabled={saving === key}
                   onChange={(event) => setPageSize(key, Number(event.target.value))}
-                  className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+                  className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
                 >
                   {PAGE_SIZES.map((size) => (
                     <option key={size} value={size}>

@@ -188,64 +188,66 @@ export function KpiModal({
       {users.length === 0 ? (
         <p className="text-sm text-muted">No playback recorded in this range.</p>
       ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-muted">
-              <th className="py-1 font-normal">User</th>
-              <th className="w-40 py-1 font-normal">Server</th>
-              <th className="w-20 py-1 text-right font-normal">Plays</th>
-              <th className="w-28 py-1 text-right font-normal">Watch time</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {users.map((user) => {
-              const open = expanded.has(user.key);
-              const detail = userSessions[user.key];
-              return (
-                <Fragment key={user.key}>
-                  <ExpandRow open={open} onToggle={() => toggleUser(user)}>
-                    <td className="py-1">
-                      <Chevron
-                        open={open}
-                        onToggle={() => toggleUser(user)}
-                        label={`Sessions for ${user.name}`}
-                      />
-                      {user.name}
-                    </td>
-                    <td className="py-1 text-muted">{user.server || "—"}</td>
-                    <td className="py-1 text-right tabular-nums">
-                      {formatCount(user.plays)}
-                    </td>
-                    <td className="py-1 text-right tabular-nums">
-                      {formatDuration(user.seconds)}
-                    </td>
-                  </ExpandRow>
-                  {open && (
-                    <tr>
-                      <td colSpan={4} className="bg-bg/60 px-3 pb-3">
-                        {(!detail || detail.status === "loading") && (
-                          <Spinner label="Loading sessions…" />
-                        )}
-                        {detail?.status === "error" && (
-                          <p className="text-xs text-error" role="alert">
-                            {detail.message}
-                          </p>
-                        )}
-                        {detail?.status === "ok" && (
-                          <SessionBody
-                            rows={detail.rows}
-                            timeZone={timeZone}
-                            multiDay={multiDay}
-                          />
-                        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-muted">
+                <th className="py-1 font-normal">User</th>
+                <th className="w-40 py-1 font-normal">Server</th>
+                <th className="w-20 py-1 text-right font-normal">Plays</th>
+                <th className="w-28 py-1 text-right font-normal">Watch time</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {users.map((user) => {
+                const open = expanded.has(user.key);
+                const detail = userSessions[user.key];
+                return (
+                  <Fragment key={user.key}>
+                    <ExpandRow open={open} onToggle={() => toggleUser(user)}>
+                      <td className="py-1">
+                        <Chevron
+                          open={open}
+                          onToggle={() => toggleUser(user)}
+                          label={`Sessions for ${user.name}`}
+                        />
+                        {user.name}
                       </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                      <td className="py-1 text-muted">{user.server || "—"}</td>
+                      <td className="py-1 text-right tabular-nums">
+                        {formatCount(user.plays)}
+                      </td>
+                      <td className="py-1 text-right tabular-nums">
+                        {formatDuration(user.seconds)}
+                      </td>
+                    </ExpandRow>
+                    {open && (
+                      <tr>
+                        <td colSpan={4} className="bg-bg/60 px-3 pb-3">
+                          {(!detail || detail.status === "loading") && (
+                            <Spinner label="Loading sessions…" />
+                          )}
+                          {detail?.status === "error" && (
+                            <p className="text-xs text-error" role="alert">
+                              {detail.message}
+                            </p>
+                          )}
+                          {detail?.status === "ok" && (
+                            <SessionBody
+                              rows={detail.rows}
+                              timeZone={timeZone}
+                              multiDay={multiDay}
+                            />
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </Modal>
   );

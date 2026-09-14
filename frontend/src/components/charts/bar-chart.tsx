@@ -71,6 +71,8 @@ export function BarChart({
 
   const showValues = data.length <= MAX_BARS_WITH_VALUES;
   const barArea = PLOT_HEIGHT_PX - (showValues ? VALUE_ROW_PX : 0);
+  // At most five labels below `sm`; thirty labels do not fit a phone.
+  const phoneStride = Math.max(1, Math.ceil(data.length / 5));
 
   return (
     <div className="flex flex-col">
@@ -148,12 +150,15 @@ export function BarChart({
 
       {/* The baseline sits under the bars, not behind them. */}
       <div className="flex gap-1 border-t border-border pt-1">
-        {data.map((datum) => (
+        {data.map((datum, index) => (
           <span
             key={datum.label}
-            className="min-w-0 flex-1 truncate text-center text-[11px] text-muted"
+            className="min-w-0 flex-1 text-center text-[11px] text-muted max-sm:overflow-visible max-sm:whitespace-nowrap sm:truncate"
           >
-            {datum.sublabel ?? datum.label}
+            <span className="sm:hidden">
+              {index % phoneStride === 0 ? datum.sublabel || datum.label : ""}
+            </span>
+            <span className="hidden sm:inline">{datum.sublabel ?? datum.label}</span>
           </span>
         ))}
       </div>

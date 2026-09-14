@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CONTROL_HEIGHT } from "@/components/ui/control";
 import { Field } from "@/components/ui/field";
 import { createUser } from "./actions";
 
@@ -112,7 +113,7 @@ export function AddUserForm() {
             value={role}
             onChange={(event) => setRole(event.target.value)}
             disabled={pending}
-            className="h-10 rounded-md border border-border bg-bg px-3 text-sm"
+            className={`${CONTROL_HEIGHT.md} rounded-md border border-border bg-bg px-3 text-sm`}
           >
             {ROLES.map((option) => (
               <option key={option} value={option}>

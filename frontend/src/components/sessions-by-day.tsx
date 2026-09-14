@@ -191,51 +191,53 @@ export function SessionList({
     return <p className="py-2 text-xs text-muted">No sessions.</p>;
   }
   return (
-    <table className="w-full text-xs">
-      <thead>
-        <tr className="text-left text-muted">
-          {showUser && <th className="w-28 py-1 pr-2 font-normal">User</th>}
-          <th className="py-1 pr-2 font-normal">Item</th>
-          <th className="w-20 py-1 pr-2 font-normal">Type</th>
-          <th className="w-28 py-1 pr-2 font-normal">Server</th>
-          <th className="w-14 py-1 pr-2 font-normal">Time</th>
-          <th className="w-16 py-1 text-right font-normal">Duration</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-border/60">
-        {rows.map((row, index) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: sessions carry no id; played_at can repeat
-          <tr key={`${row.played_at ?? ""}-${index}`}>
-            {showUser && (
-              <td className="w-28 py-1 pr-2 align-top">{row.user_display_name}</td>
-            )}
-            <td className="py-1 pr-2">{sessionTitle(row)}</td>
-            <td className="w-20 py-1 pr-2 text-muted">{row.item_type || "—"}</td>
-            <td className="w-28 py-1 pr-2 truncate text-muted">
-              {row.instance_label || "—"}
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left text-muted">
+            {showUser && <th className="w-28 py-1 pr-2 font-normal">User</th>}
+            <th className="py-1 pr-2 font-normal">Item</th>
+            <th className="w-20 py-1 pr-2 font-normal">Type</th>
+            <th className="w-28 py-1 pr-2 font-normal">Server</th>
+            <th className="w-14 py-1 pr-2 font-normal">Time</th>
+            <th className="w-16 py-1 text-right font-normal">Duration</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/60">
+          {rows.map((row, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: sessions carry no id; played_at can repeat
+            <tr key={`${row.played_at ?? ""}-${index}`}>
+              {showUser && (
+                <td className="w-28 py-1 pr-2 align-top">{row.user_display_name}</td>
+              )}
+              <td className="py-1 pr-2">{sessionTitle(row)}</td>
+              <td className="w-20 py-1 pr-2 text-muted">{row.item_type || "—"}</td>
+              <td className="w-28 py-1 pr-2 truncate text-muted">
+                {row.instance_label || "—"}
+              </td>
+              <td className="w-14 py-1 pr-2 whitespace-nowrap text-muted">
+                {sessionTime(row, timeZone)}
+              </td>
+              <td className="w-16 py-1 text-right tabular-nums">
+                {formatDuration(row.duration_seconds ?? 0)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-border font-medium">
+            <td colSpan={showUser ? 5 : 4} className="py-1 pr-2 text-muted">
+              Total
             </td>
-            <td className="w-14 py-1 pr-2 whitespace-nowrap text-muted">
-              {sessionTime(row, timeZone)}
-            </td>
-            <td className="w-16 py-1 text-right tabular-nums">
-              {formatDuration(row.duration_seconds ?? 0)}
+            <td className="py-1 text-right tabular-nums">
+              {formatDuration(
+                rows.reduce((sum, row) => sum + (row.duration_seconds ?? 0), 0),
+              )}
             </td>
           </tr>
-        ))}
-      </tbody>
-      <tfoot>
-        <tr className="border-t border-border font-medium">
-          <td colSpan={showUser ? 5 : 4} className="py-1 pr-2 text-muted">
-            Total
-          </td>
-          <td className="py-1 text-right tabular-nums">
-            {formatDuration(
-              rows.reduce((sum, row) => sum + (row.duration_seconds ?? 0), 0),
-            )}
-          </td>
-        </tr>
-      </tfoot>
-    </table>
+        </tfoot>
+      </table>
+    </div>
   );
 }
 
@@ -309,61 +311,63 @@ export function SessionsByDayTable({
           cover those, not the whole range.
         </p>
       )}
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-muted">
-            <th className="w-28 py-1 font-normal">Day</th>
-            <th className="py-1 font-normal">Date</th>
-            <th className="w-24 py-1 text-right font-normal">Sessions</th>
-            <th className="w-24 py-1 text-right font-normal">Total</th>
-            <th className="w-24 py-1 text-right font-normal">Average</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {days.map((group) => {
-            const total = group.rows.reduce(
-              (sum, row) => sum + (row.duration_seconds ?? 0),
-              0,
-            );
-            const open = expanded.has(group.day);
-            return (
-              <Fragment key={group.day}>
-                <ExpandRow open={open} onToggle={() => toggle(group.day)}>
-                  <td className="w-28 py-1">
-                    <Chevron
-                      open={open}
-                      onToggle={() => toggle(group.day)}
-                      label={`Sessions on ${group.day}`}
-                    />
-                    {weekdayName(group.day)}
-                  </td>
-                  <td className="py-1 tabular-nums">{group.day}</td>
-                  <td className="py-1 text-right tabular-nums">
-                    {formatCount(group.rows.length)}
-                  </td>
-                  <td className="py-1 text-right tabular-nums">
-                    {formatDuration(total)}
-                  </td>
-                  <td className="py-1 text-right tabular-nums">
-                    {formatDuration(Math.round(total / group.rows.length))}
-                  </td>
-                </ExpandRow>
-                {open && (
-                  <tr>
-                    <td colSpan={5} className="bg-bg/60 px-3 pb-3">
-                      <SessionList
-                        rows={group.rows}
-                        timeZone={timeZone}
-                        showUser={showUser}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-muted">
+              <th className="w-28 py-1 font-normal">Day</th>
+              <th className="py-1 font-normal">Date</th>
+              <th className="w-24 py-1 text-right font-normal">Sessions</th>
+              <th className="w-24 py-1 text-right font-normal">Total</th>
+              <th className="w-24 py-1 text-right font-normal">Average</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {days.map((group) => {
+              const total = group.rows.reduce(
+                (sum, row) => sum + (row.duration_seconds ?? 0),
+                0,
+              );
+              const open = expanded.has(group.day);
+              return (
+                <Fragment key={group.day}>
+                  <ExpandRow open={open} onToggle={() => toggle(group.day)}>
+                    <td className="w-28 whitespace-nowrap py-1">
+                      <Chevron
+                        open={open}
+                        onToggle={() => toggle(group.day)}
+                        label={`Sessions on ${group.day}`}
                       />
+                      {weekdayName(group.day)}
                     </td>
-                  </tr>
-                )}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
+                    <td className="whitespace-nowrap py-1 tabular-nums">{group.day}</td>
+                    <td className="whitespace-nowrap py-1 text-right tabular-nums">
+                      {formatCount(group.rows.length)}
+                    </td>
+                    <td className="whitespace-nowrap py-1 text-right tabular-nums">
+                      {formatDuration(total)}
+                    </td>
+                    <td className="whitespace-nowrap py-1 text-right tabular-nums">
+                      {formatDuration(Math.round(total / group.rows.length))}
+                    </td>
+                  </ExpandRow>
+                  {open && (
+                    <tr>
+                      <td colSpan={5} className="bg-bg/60 px-3 pb-3">
+                        <SessionList
+                          rows={group.rows}
+                          timeZone={timeZone}
+                          showUser={showUser}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }

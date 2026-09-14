@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
+import { BELOW_LG } from "@/lib/breakpoints";
 import { clientFetch } from "@/lib/client-fetch";
 import { cn } from "@/lib/cn";
 import { formatDateTime, formatDuration } from "@/lib/format";
@@ -30,8 +31,10 @@ const PLOT_MIN_PX = 220;
 const PLOT_MAX_PX = 460;
 const PLOT_FALLBACK_PX = 300;
 
-/** Above this many days the flexible layout collapses; switch to scrolling. */
-const DENSE_THRESHOLD = 45;
+/** Below this per-column budget (column + gap) the flexible layout is unusable. */
+const MIN_COLUMN_PX = 14;
+/** Width a day label needs before its neighbours start overlapping. */
+const LABEL_PX = 40;
 
 const DAY_NAMES = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
@@ -96,6 +99,9 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
   const rows = useMemo(() => normalise(metrics.watch_time_per_user_per_day), [metrics]);
   const [detail, setDetail] = useState<Detail>({ status: "idle" });
   const latestRequest = useRef<string>("");
+  // Card renders a <section> but does not forward refs, so the "What was
+  // watched" panel is wrapped in a plain div to get a scroll target.
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   /**
    * One stacked column per day, a segment per user — the shape the old chart
@@ -211,6 +217,7 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
     y: number;
   } | null>(null);
   const [plotHeight, setPlotHeight] = useState<number>(PLOT_FALLBACK_PX);
+  const [plotWidth, setPlotWidth] = useState<number>(0);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-attach when the plot appears or vanishes (see comment)
   useEffect(() => {
@@ -223,6 +230,7 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
     const observer = new ResizeObserver(([entry]) => {
       const width = entry.contentRect.width;
       if (width > 0) {
+        setPlotWidth(width);
         setPlotHeight(
           Math.round(Math.min(PLOT_MAX_PX, Math.max(PLOT_MIN_PX, width / PLOT_ASPECT))),
         );
@@ -232,9 +240,12 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
     return () => observer.disconnect();
   }, [stacks.length]);
 
-  const dense = stacks.length > DENSE_THRESHOLD;
-  // A label every ~14 columns stays readable at any range length.
-  const labelStride = dense ? Math.ceil(stacks.length / 14) : 1;
+  // Width-aware, not count-aware: thirty days fit a desktop but not a phone.
+  const dense = plotWidth > 0 && stacks.length * MIN_COLUMN_PX > plotWidth;
+  const labelStride = Math.max(
+    1,
+    Math.ceil(stacks.length / Math.max(1, Math.floor((plotWidth || 1200) / LABEL_PX))),
+  );
 
   function loadDetail(row: Row) {
     const requestKey = `${row.userKey}|${row.date}`;
@@ -245,6 +256,14 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
       userKey: row.userKey,
       userName: row.userName,
     });
+    // On a phone the panel sits below the chart; bring it up when a pick is made.
+    if (window.matchMedia(BELOW_LG).matches) {
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      panelRef.current?.scrollIntoView({
+        behavior: reduce ? "auto" : "smooth",
+        block: "start",
+      });
+    }
     clientFetch<UserSessionRow[]>(
       `/api/dashboard/user-sessions?user_id=${encodeURIComponent(row.userKey)}&date=${row.date}`,
     )
@@ -294,8 +313,11 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
               <span className="text-text tabular-nums">
                 {formatDuration(totalSeconds)}
               </span>{" "}
-              · {legend.length} {legend.length === 1 ? "user" : "users"} · click a segment
-              to see what was watched
+              · {legend.length} {legend.length === 1 ? "user" : "users"}
+              <span className="hidden sm:inline">
+                {" "}
+                · click a segment to see what was watched
+              </span>
             </span>
           ) : undefined
         }
@@ -439,85 +461,87 @@ export function DailyView({ metrics }: { metrics: MediaMetrics }) {
           )}
         </Card>
 
-        <Card title="What was watched">
-          {detail.status === "idle" && (
-            <p className="py-4 text-sm text-muted">
-              Pick a segment or a row to see what was watched.
-            </p>
-          )}
-          {detail.status === "loading" && <Spinner label="Loading sessions…" />}
-          {detail.status === "error" && (
-            <p className="text-sm text-error" role="alert">
-              {detail.message}
-            </p>
-          )}
-          {(detail.status === "ok" || detail.status === "loading") && (
-            <div className="flex flex-col gap-0.5 pb-3">
-              <span className="flex items-center gap-2 text-base font-semibold">
-                <span
-                  aria-hidden="true"
-                  className="size-2.5 rounded-full"
-                  style={{
-                    background:
-                      legend.find((entry) => entry.key === detail.userKey)?.color ??
-                      OTHER_COLOR,
-                  }}
-                />
-                {detail.userName} · {dayLabel(detail.date)}
-              </span>
-              {detail.status === "ok" && (
-                <span className="text-xs text-muted">
-                  <span className="text-text tabular-nums">
-                    {detail.rows.length}{" "}
-                    {detail.rows.length === 1 ? "session" : "sessions"} ·{" "}
-                    {formatDuration(
-                      detail.rows.reduce(
-                        (sum, session) =>
-                          sum +
-                          rowNumber(session as Record<string, unknown>, [
-                            "duration_seconds",
-                          ]),
-                        0,
-                      ),
-                    )}
-                  </span>
+        <div ref={panelRef} className="flex flex-col">
+          <Card title="What was watched" className="flex-1">
+            {detail.status === "idle" && (
+              <p className="py-4 text-sm text-muted">
+                Pick a segment or a row to see what was watched.
+              </p>
+            )}
+            {detail.status === "loading" && <Spinner label="Loading sessions…" />}
+            {detail.status === "error" && (
+              <p className="text-sm text-error" role="alert">
+                {detail.message}
+              </p>
+            )}
+            {(detail.status === "ok" || detail.status === "loading") && (
+              <div className="flex flex-col gap-0.5 pb-3">
+                <span className="flex items-center gap-2 text-base font-semibold">
+                  <span
+                    aria-hidden="true"
+                    className="size-2.5 rounded-full"
+                    style={{
+                      background:
+                        legend.find((entry) => entry.key === detail.userKey)?.color ??
+                        OTHER_COLOR,
+                    }}
+                  />
+                  {detail.userName} · {dayLabel(detail.date)}
                 </span>
-              )}
-            </div>
-          )}
-          {detail.status === "ok" && detail.rows.length === 0 && (
-            <p className="py-4 text-sm text-muted">No sessions recorded that day.</p>
-          )}
-          {detail.status === "ok" && detail.rows.length > 0 && (
-            <ul className="max-h-80 divide-y divide-border overflow-y-auto text-sm">
-              {detail.rows.map((session, index) => {
-                const row = session as Record<string, unknown>;
-                return (
-                  <li
-                    // biome-ignore lint/suspicious/noArrayIndexKey: sessions carry no id; played_at can repeat
-                    key={`${row.played_at}-${index}`}
-                    className="grid grid-cols-[3rem_minmax(0,1fr)_auto] items-baseline gap-2.5 py-2"
-                  >
-                    <span className="tabular-nums text-muted">
-                      {formatDateTime(row.played_at, metrics.app_timezone).slice(-5)}
+                {detail.status === "ok" && (
+                  <span className="text-xs text-muted">
+                    <span className="text-text tabular-nums">
+                      {detail.rows.length}{" "}
+                      {detail.rows.length === 1 ? "session" : "sessions"} ·{" "}
+                      {formatDuration(
+                        detail.rows.reduce(
+                          (sum, session) =>
+                            sum +
+                            rowNumber(session as Record<string, unknown>, [
+                              "duration_seconds",
+                            ]),
+                          0,
+                        ),
+                      )}
                     </span>
-                    <span className="min-w-0">
-                      <span className="block truncate">
-                        {rowText(row, ["title"], "—")}
+                  </span>
+                )}
+              </div>
+            )}
+            {detail.status === "ok" && detail.rows.length === 0 && (
+              <p className="py-4 text-sm text-muted">No sessions recorded that day.</p>
+            )}
+            {detail.status === "ok" && detail.rows.length > 0 && (
+              <ul className="max-h-80 divide-y divide-border overflow-y-auto text-sm">
+                {detail.rows.map((session, index) => {
+                  const row = session as Record<string, unknown>;
+                  return (
+                    <li
+                      // biome-ignore lint/suspicious/noArrayIndexKey: sessions carry no id; played_at can repeat
+                      key={`${row.played_at}-${index}`}
+                      className="grid grid-cols-[3rem_minmax(0,1fr)_auto] items-baseline gap-2.5 py-2"
+                    >
+                      <span className="tabular-nums text-muted">
+                        {formatDateTime(row.played_at, metrics.app_timezone).slice(-5)}
                       </span>
-                      <span className="block text-[11px] text-muted">
-                        {rowText(row, ["item_type"], "")}
+                      <span className="min-w-0">
+                        <span className="block truncate">
+                          {rowText(row, ["title"], "—")}
+                        </span>
+                        <span className="block text-[11px] text-muted">
+                          {rowText(row, ["item_type"], "")}
+                        </span>
                       </span>
-                    </span>
-                    <span className="tabular-nums text-muted">
-                      {formatDuration(rowNumber(row, ["duration_seconds"]))}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </Card>
+                      <span className="tabular-nums text-muted">
+                        {formatDuration(rowNumber(row, ["duration_seconds"]))}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Card>
+        </div>
       </div>
     </div>
   );

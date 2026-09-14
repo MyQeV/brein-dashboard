@@ -4,10 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { useNowPlayingContext } from "@/lib/now-playing-context";
 import { CATEGORY_LABELS, CATEGORY_ORDER, serviceIcon } from "@/lib/service-types";
 import { useServiceTypes } from "@/lib/service-types-context";
 import type { Instance } from "@/lib/types";
-import { useNowPlaying } from "@/lib/use-now-playing";
 
 const PRIMARY_LINKS = [
   { href: "/", label: "Dashboard" },
@@ -17,10 +17,14 @@ const PRIMARY_LINKS = [
 
 /** The stream count the old nav carried beside "Now playing". */
 function NowPlayingCount() {
-  const { sessions } = useNowPlaying();
+  const { sessions } = useNowPlayingContext();
   if (sessions.length === 0) return null;
   return (
-    <span className="ml-auto rounded-full bg-accent/15 px-1.5 text-xs font-medium tabular-nums text-accent">
+    <span
+      role="img"
+      aria-label={`${sessions.length} playing`}
+      className="ml-auto rounded-full bg-accent/15 px-1.5 text-xs font-medium tabular-nums text-accent"
+    >
       {sessions.length}
       <span className="sr-only"> playing</span>
     </span>
@@ -45,7 +49,7 @@ function NavLink({
       href={href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+        "flex items-center gap-2 rounded-md px-2 py-2 text-sm lg:py-1.5",
         active ? "bg-surface text-text" : "text-muted hover:text-text hover:bg-surface",
       )}
     >
@@ -61,7 +65,13 @@ function NavLink({
   );
 }
 
-export function Sidebar({ instances }: { instances: Instance[] }) {
+export function Sidebar({
+  instances,
+  className,
+}: {
+  instances: Instance[];
+  className?: string;
+}) {
   // Read here, not from a header in the layout: layouts are not re-rendered
   // on soft navigation between sibling pages, so a path threaded down from
   // the server goes stale and the active link sticks to the first page shown.
@@ -70,7 +80,12 @@ export function Sidebar({ instances }: { instances: Instance[] }) {
   const configured = instances.filter((i) => i.is_configured && i.active !== false);
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col gap-4 border-r border-border bg-bg p-3">
+    <aside
+      className={cn(
+        "flex w-56 shrink-0 flex-col gap-4 border-r border-border bg-bg p-3",
+        className,
+      )}
+    >
       <Link href="/" className="flex items-center gap-2 px-2 py-1 font-semibold">
         {/* biome-ignore lint/performance/noImgElement: static SVG logo */}
         <img src="/static/icons/brein.svg" alt="" aria-hidden="true" className="size-5" />

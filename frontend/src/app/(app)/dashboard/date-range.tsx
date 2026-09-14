@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { CONTROL_HEIGHT } from "@/components/ui/control";
 
 /** Matches the old dashboard's preset row exactly. */
 const PRESETS = [
@@ -139,7 +140,7 @@ export function DateRange({
         aria-label="Start date"
         value={startDate}
         onChange={(event) => push({ start_date: event.target.value, days: undefined })}
-        className="h-8 rounded-md border border-border bg-surface px-2 text-sm"
+        className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-surface px-2 text-sm`}
       />
       <span className="text-muted">–</span>
       <input
@@ -147,7 +148,7 @@ export function DateRange({
         aria-label="End date"
         value={endDate}
         onChange={(event) => push({ end_date: event.target.value, days: undefined })}
-        className="h-8 rounded-md border border-border bg-surface px-2 text-sm"
+        className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-surface px-2 text-sm`}
       />
 
       <Button

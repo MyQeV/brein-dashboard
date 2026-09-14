@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
+import { CONTROL_HEIGHT } from "./control";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md";
@@ -12,8 +13,8 @@ const VARIANTS: Record<Variant, string> = {
 };
 
 const SIZES: Record<Size, string> = {
-  sm: "h-8 px-3 text-sm",
-  md: "h-10 px-4 text-sm",
+  sm: `${CONTROL_HEIGHT.sm} px-3 text-sm`,
+  md: `${CONTROL_HEIGHT.md} px-4 text-sm`,
 };
 
 /**

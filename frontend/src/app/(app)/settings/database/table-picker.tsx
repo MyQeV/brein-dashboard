@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { CONTROL_HEIGHT } from "@/components/ui/control";
 
 export function TablePicker({ tables, current }: { tables: string[]; current: string }) {
   const router = useRouter();
@@ -17,7 +18,7 @@ export function TablePicker({ tables, current }: { tables: string[]; current: st
             `/settings/database?table=${encodeURIComponent(event.target.value)}`,
           );
         }}
-        className="h-8 rounded-md border border-border bg-bg px-2 text-sm"
+        className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
       >
         {tables.map((table) => (
           <option key={table} value={table}>

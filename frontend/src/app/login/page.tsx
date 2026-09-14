@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Sign in" };
 
 export default function LoginPage() {
   return (
-    <main className="grid min-h-dvh place-items-center p-6">
+    <main className="grid min-h-dvh place-items-center p-4">
       {/* useSearchParams() reads the `next` param, so the form cannot be
           prerendered; the boundary lets the rest of the page be. */}
       <Suspense

@@ -93,7 +93,7 @@ export function RankedBars({
               {onRowClick && (
                 <span
                   aria-hidden="true"
-                  className="text-muted opacity-0 transition-opacity group-hover:opacity-100"
+                  className="text-muted opacity-0 transition-opacity group-hover:opacity-100 pointer-coarse:opacity-100"
                 >
                   ›
                 </span>
