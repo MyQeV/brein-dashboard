@@ -11,10 +11,13 @@ import {
 } from "@/components/sessions-by-day";
 import { Modal } from "@/components/ui/modal";
 import { Spinner } from "@/components/ui/spinner";
+import { BELOW_LG } from "@/lib/breakpoints";
 import { clientFetch } from "@/lib/client-fetch";
+import { cn } from "@/lib/cn";
 import { formatCount, formatDuration } from "@/lib/format";
 import { rowNumber, rowText } from "@/lib/rows";
 import type { MediaMetrics } from "@/lib/types";
+import { useMediaQuery } from "@/lib/use-media-query";
 import { MODAL_LISTS_EXPANDED, useBooleanPreference } from "@/lib/use-preference";
 
 /**
@@ -56,6 +59,7 @@ export function KpiModal({
 }) {
   const timeZone = metrics.app_timezone || "UTC";
   const listsExpanded = useBooleanPreference(MODAL_LISTS_EXPANDED);
+  const compact = useMediaQuery(BELOW_LG);
   const multiDay = metrics.start_date !== metrics.end_date;
 
   // A set, not one key: opening a row must not close the ones already open.
@@ -172,6 +176,21 @@ export function KpiModal({
     }
   }, [target, query, users, flipped, listsExpanded]);
 
+  /** One user's sessions, or where they are on the way in. */
+  function detailOf(key: string) {
+    const detail = userSessions[key];
+    if (!detail || detail.status === "loading")
+      return <Spinner label="Loading sessions…" />;
+    if (detail.status === "error") {
+      return (
+        <p className="text-xs text-error" role="alert">
+          {detail.message}
+        </p>
+      );
+    }
+    return <SessionBody rows={detail.rows} timeZone={timeZone} multiDay={multiDay} />;
+  }
+
   if (target === "avg-session") {
     return (
       <Modal
@@ -205,6 +224,40 @@ export function KpiModal({
     >
       {users.length === 0 ? (
         <p className="text-sm text-muted">No playback recorded in this range.</p>
+      ) : compact ? (
+        // Four columns on a phone pushed the numbers off the right edge. One
+        // tappable row per user: name and server, plays and watch time.
+        <ul className="divide-y divide-border text-sm">
+          {users.map((user) => {
+            const open = isOpen(user.key);
+            return (
+              <li key={user.key}>
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  onClick={() => toggle(user.key)}
+                  className={cn(
+                    "flex w-full items-center gap-1 py-2.5 text-left",
+                    open && "bg-surface-2",
+                  )}
+                >
+                  <Chevron open={open} />
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="truncate font-medium">{user.name}</span>
+                    <span className="text-xs text-muted">{user.server || "—"}</span>
+                  </span>
+                  <span className="flex shrink-0 flex-col items-end gap-0.5 tabular-nums">
+                    <span>{formatDuration(user.seconds)}</span>
+                    <span className="text-xs text-muted">
+                      {formatCount(user.plays)} {user.plays === 1 ? "play" : "plays"}
+                    </span>
+                  </span>
+                </button>
+                {open && <div className="bg-bg/60 px-2 pb-2">{detailOf(user.key)}</div>}
+              </li>
+            );
+          })}
+        </ul>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -219,7 +272,6 @@ export function KpiModal({
             <tbody className="divide-y divide-border">
               {users.map((user) => {
                 const open = isOpen(user.key);
-                const detail = userSessions[user.key];
                 return (
                   <Fragment key={user.key}>
                     <ExpandRow open={open} onToggle={() => toggle(user.key)}>
@@ -242,21 +294,7 @@ export function KpiModal({
                     {open && (
                       <tr>
                         <td colSpan={4} className="bg-bg/60 px-3 pb-3">
-                          {(!detail || detail.status === "loading") && (
-                            <Spinner label="Loading sessions…" />
-                          )}
-                          {detail?.status === "error" && (
-                            <p className="text-xs text-error" role="alert">
-                              {detail.message}
-                            </p>
-                          )}
-                          {detail?.status === "ok" && (
-                            <SessionBody
-                              rows={detail.rows}
-                              timeZone={timeZone}
-                              multiDay={multiDay}
-                            />
-                          )}
+                          {detailOf(user.key)}
                         </td>
                       </tr>
                     )}

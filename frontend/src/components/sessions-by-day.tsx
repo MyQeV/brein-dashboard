@@ -1,8 +1,10 @@
 "use client";
 
 import { Fragment, type ReactNode, useMemo, useState } from "react";
+import { BELOW_LG } from "@/lib/breakpoints";
 import { cn } from "@/lib/cn";
 import { formatCount, formatDuration } from "@/lib/format";
+import { useMediaQuery } from "@/lib/use-media-query";
 
 /**
  * Sessions grouped by the day they happened on.
@@ -187,9 +189,51 @@ export function SessionList({
   timeZone: string;
   showUser?: boolean;
 }) {
+  const compact = useMediaQuery(BELOW_LG);
   if (rows.length === 0) {
     return <p className="py-2 text-xs text-muted">No sessions.</p>;
   }
+  const total = rows.reduce((sum, row) => sum + (row.duration_seconds ?? 0), 0);
+
+  // Six columns do not fit a phone: the table scrolled sideways with the
+  // duration off-screen. Each session is a card there — title and duration
+  // on the first line, who / what / where / when in one muted line under it.
+  if (compact) {
+    return (
+      <ul className="divide-y divide-border/60">
+        {rows.map((row, index) => {
+          const meta = [
+            showUser ? row.user_display_name : null,
+            row.item_type,
+            row.instance_label,
+            sessionTime(row, timeZone),
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            <li
+              // biome-ignore lint/suspicious/noArrayIndexKey: sessions carry no id; played_at can repeat
+              key={`${row.played_at ?? ""}-${index}`}
+              className="flex flex-col gap-0.5 py-2"
+            >
+              <span className="flex items-start justify-between gap-3">
+                <span className="min-w-0 text-sm">{sessionTitle(row)}</span>
+                <span className="shrink-0 text-sm tabular-nums">
+                  {formatDuration(row.duration_seconds ?? 0)}
+                </span>
+              </span>
+              <span className="text-xs text-muted">{meta}</span>
+            </li>
+          );
+        })}
+        <li className="flex justify-between py-2 text-sm font-medium">
+          <span className="text-muted">Total</span>
+          <span className="tabular-nums">{formatDuration(total)}</span>
+        </li>
+      </ul>
+    );
+  }
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -229,11 +273,7 @@ export function SessionList({
             <td colSpan={showUser ? 5 : 4} className="py-1 pr-2 text-muted">
               Total
             </td>
-            <td className="py-1 text-right tabular-nums">
-              {formatDuration(
-                rows.reduce((sum, row) => sum + (row.duration_seconds ?? 0), 0),
-              )}
-            </td>
+            <td className="py-1 text-right tabular-nums">{formatDuration(total)}</td>
           </tr>
         </tfoot>
       </table>
@@ -305,18 +345,80 @@ export function SessionsByDayTable({
     });
   }
 
+  const compact = useMediaQuery(BELOW_LG);
+
   if (days.length === 0) {
     return <p className="text-sm text-muted">No sessions in this range.</p>;
   }
 
+  const cappedNote = capped && (
+    <p className="pb-2 text-xs text-muted">
+      Showing the most recent {formatCount(rows.length)} sessions — the totals below cover
+      those, not the whole range.
+    </p>
+  );
+
+  // Five columns on a phone meant Sessions, Total and Average lived past
+  // the right edge. Each day is one tappable row there: the day on the first
+  // line, its three numbers on the second.
+  if (compact) {
+    return (
+      <>
+        {cappedNote}
+        <ul className="divide-y divide-border text-sm">
+          {days.map((group) => {
+            const total = group.rows.reduce(
+              (sum, row) => sum + (row.duration_seconds ?? 0),
+              0,
+            );
+            const open = flipped.has(group.day) !== defaultExpanded;
+            return (
+              <li key={group.day}>
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  onClick={() => toggle(group.day)}
+                  className={cn(
+                    "flex w-full items-center gap-1 py-2.5 text-left",
+                    open && "bg-surface-2",
+                  )}
+                >
+                  <Chevron open={open} />
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="font-medium">
+                      {weekdayName(group.day)}{" "}
+                      <span className="font-normal text-muted tabular-nums">
+                        {group.day}
+                      </span>
+                    </span>
+                    <span className="text-xs text-muted tabular-nums">
+                      {formatCount(group.rows.length)}{" "}
+                      {group.rows.length === 1 ? "session" : "sessions"} ·{" "}
+                      {formatDuration(total)} · avg{" "}
+                      {formatDuration(Math.round(total / group.rows.length))}
+                    </span>
+                  </span>
+                </button>
+                {open && (
+                  <div className="bg-bg/60 px-2 pb-2">
+                    <SessionList
+                      rows={group.rows}
+                      timeZone={timeZone}
+                      showUser={showUser}
+                    />
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    );
+  }
+
   return (
     <>
-      {capped && (
-        <p className="pb-2 text-xs text-muted">
-          Showing the most recent {formatCount(rows.length)} sessions — the totals below
-          cover those, not the whole range.
-        </p>
-      )}
+      {cappedNote}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>

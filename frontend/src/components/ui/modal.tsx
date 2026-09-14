@@ -9,7 +9,9 @@ import { useFocusTrap } from "@/lib/use-focus-trap";
  *
  * Sized against the viewport rather than a fixed cap — session rows carry
  * four columns, and a 42rem dialog truncated titles on a screen with room
- * to spare.
+ * to spare. Below lg it is a full-screen sheet instead: a floating card on
+ * a phone left a sliver of page around it, wasted the width the tables
+ * need, and put the close button under a thumb's reach only by luck.
  */
 export function Modal({
   title,
@@ -60,7 +62,7 @@ export function Modal({
       // Anchored near the top rather than centred: a centred dialog grows from
       // both edges, so expanding a row jumps the whole thing upwards. This way
       // the top edge holds still and the content only grows downwards.
-      className="fixed inset-0 z-600 flex items-start justify-center overflow-y-auto bg-(--scrim) p-2 pt-[4dvh] lg:p-4 lg:pt-[7dvh]"
+      className="fixed inset-0 z-600 flex items-start justify-center overflow-y-auto bg-(--scrim) lg:p-4 lg:pt-[7dvh]"
       role="presentation"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -71,9 +73,9 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="flex max-h-[92dvh] lg:max-h-[85dvh] w-full max-w-[min(72rem,92vw)] flex-col rounded-lg border border-border bg-surface shadow-(--shadow-elevated)"
+        className="flex h-dvh w-full flex-col bg-surface lg:h-auto lg:max-h-[85dvh] lg:max-w-[min(72rem,92vw)] lg:rounded-lg lg:border lg:border-border lg:shadow-(--shadow-elevated)"
       >
-        <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
+        <header className="flex items-center justify-between gap-4 border-b border-border px-4 py-3 lg:px-5 lg:py-4">
           <div className="flex min-w-0 flex-col gap-0.5">
             <h2 className="truncate text-base font-semibold">{title}</h2>
             {subtitle && <p className="truncate text-xs text-muted">{subtitle}</p>}
@@ -84,7 +86,8 @@ export function Modal({
             aria-label="Close"
             // biome-ignore lint/a11y/noAutofocus: focus must move into the dialog on open
             autoFocus
-            className="rounded-sm p-1 text-muted hover:bg-surface-2 hover:text-text"
+            // 44px on touch widths, the compact desktop size from lg up.
+            className="-m-2 rounded-sm p-3 text-muted hover:bg-surface-2 hover:text-text lg:m-0 lg:p-1"
           >
             <svg
               width="18"
@@ -101,7 +104,9 @@ export function Modal({
           </button>
         </header>
 
-        <div className="overflow-y-auto p-5">{children}</div>
+        <div className="overflow-y-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))] lg:p-5">
+          {children}
+        </div>
       </div>
     </div>,
     document.body,
