@@ -1,6 +1,5 @@
 """Run the Brein web app."""
 
-import asyncio
 import os
 import sys
 
