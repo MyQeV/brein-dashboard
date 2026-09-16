@@ -38,14 +38,6 @@ class TaskType:
 # import-time cycles between jobs/* modules.
 
 
-async def _exec_dashboard_cache_refresh(
-    _t: dict[str, Any], _i: dict[str, Any] | None, session: AsyncSession
-) -> None:
-    from brein.jobs.dashboard_cache_refresh import run_once
-
-    await run_once(session)
-
-
 async def _exec_token_cleanup(
     _t: dict[str, Any], _i: dict[str, Any] | None, session: AsyncSession
 ) -> None:
@@ -81,15 +73,6 @@ def _instance_exec(module_name: str, fn_name: str) -> ExecuteFn:
 
 _CORE_TASK_TYPES: dict[str, TaskType] = {
     # Global tasks ----------------------------------------------------------
-    "dashboard_cache_refresh": TaskType(
-        key="dashboard_cache_refresh",
-        name="Dashboard cache refresh",
-        description="Rebuilds the dashboard stats cache.",
-        category="cache",
-        service_type=None,
-        default_interval_seconds=600,
-        execute=_exec_dashboard_cache_refresh,
-    ),
     "token_cleanup": TaskType(
         key="token_cleanup",
         name="Token cleanup",

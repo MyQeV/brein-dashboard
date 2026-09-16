@@ -2,20 +2,26 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
-import { CONTROL_HEIGHT } from "@/components/ui/control";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/cn";
 import { formatClock } from "@/lib/format";
 import { type NowPlayingCard, toCard } from "@/lib/now-playing";
+import { useNowPlayingContext } from "@/lib/now-playing-context";
 import type { NowPlayingSession } from "@/lib/types";
 import { externalHref } from "@/lib/url";
-import { useNowPlaying } from "@/lib/use-now-playing";
 
 export function NowPlayingView({
   initialSessions,
 }: {
   initialSessions: NowPlayingSession[];
 }) {
-  const { sessions, connection } = useNowPlaying(initialSessions);
+  // The shell's provider owns the one socket; opening another here meant two
+  // sockets and two poll loops per page. Its first payload has not arrived
+  // when this renders, on the server or on hydration, so the server-fetched
+  // list is what shows until it does.
+  const live = useNowPlayingContext();
+  const sessions = live.loaded ? live.sessions : initialSessions;
+  const connection = live.connection;
   const [instanceFilter, setInstanceFilter] = useState<string>("all");
 
   const cards = useMemo(() => sessions.map(toCard), [sessions]);
@@ -88,12 +94,16 @@ export function NowPlayingView({
 
         <div className="flex items-center gap-3">
           {instances.length > 1 && (
-            <label className="flex items-center gap-2 text-sm">
+            <label
+              htmlFor="now-playing-server"
+              className="flex items-center gap-2 text-sm"
+            >
               Server
-              <select
+              <Select
+                id="now-playing-server"
+                size="sm"
                 value={activeFilter}
                 onChange={(event) => setInstanceFilter(event.target.value)}
-                className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
               >
                 <option value="all">All</option>
                 {instances.map(([id, label]) => (
@@ -101,7 +111,7 @@ export function NowPlayingView({
                     {label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           )}
           <span className="text-xs text-muted" role="status">
@@ -123,7 +133,7 @@ export function NowPlayingView({
           {visible.map((card) => (
             <li
               key={`${card.instanceId}-${card.sessionId}`}
-              className="flex overflow-hidden rounded-[10px] bg-card shadow-[0_2px_8px_rgba(0,0,0,0.2)]"
+              className="flex overflow-hidden rounded-md bg-card shadow-(--shadow-elevated)"
             >
               {card.posterUrl ? (
                 // biome-ignore lint/performance/noImgElement: proxied through the API, not a local asset
@@ -186,12 +196,12 @@ export function NowPlayingView({
                       target="_blank"
                       rel="noopener noreferrer"
                       title={`Open ${card.userName} on ${card.instanceLabel || "the server"}`}
-                      className="rounded bg-surface px-2 py-0.5 text-xs font-semibold text-accent shadow-[0_1px_3px_rgba(0,0,0,0.2)] hover:bg-accent hover:text-bg"
+                      className="rounded border border-border bg-surface px-2 py-0.5 text-xs font-semibold text-accent hover:bg-accent hover:text-bg"
                     >
                       {card.userName}
                     </a>
                   ) : (
-                    <span className="rounded bg-surface px-2 py-0.5 text-xs font-semibold text-accent shadow-[0_1px_3px_rgba(0,0,0,0.2)]">
+                    <span className="rounded border border-border bg-surface px-2 py-0.5 text-xs font-semibold text-accent">
                       {card.userName}
                     </span>
                   )}

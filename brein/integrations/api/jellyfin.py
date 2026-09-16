@@ -13,6 +13,7 @@ from brein.integrations.api.emby import (
     update_user_policy,
     get_sessions,
     get_items_by_type,
+    get_system_info,
     get_system_info_public,
     post_system_restart,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "get_sessions",
     "get_items_by_type",
     "test_connection",
+    "get_system_info",
     "get_system_info_public",
     "post_system_restart",
 ]
@@ -71,7 +73,11 @@ async def get_users(base_url: str, api_key: str) -> tuple[bool, list | None]:
 
 async def test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
     """Test connection to Jellyfin (GET /System/Info with the API key). Returns (success, message)."""
-    from brein.integrations.api.base import get_http_client, DEFAULT_HTTP_TIMEOUT
+    from brein.integrations.api.base import (
+        DEFAULT_HTTP_TIMEOUT,
+        get_http_client,
+        redirect_message,
+    )
     from urllib.parse import urljoin
 
     base = (base_url or "").strip().rstrip("/")
@@ -83,9 +89,11 @@ async def test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
         r = await get_http_client().get(
             url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT
         )
+        if 300 <= r.status_code < 400:
+            return False, redirect_message(r)
         if r.status_code == 401:
             return False, "Invalid API key"
-        if r.status_code >= 400:
+        if r.status_code != 200:
             return False, f"HTTP {r.status_code}"
         return True, "OK"
     except Exception as e:

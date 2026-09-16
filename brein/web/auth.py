@@ -1,8 +1,5 @@
 """Auth: password hashing, JWT, OAuth2 scheme, get_current_user dependencies."""
 
-import hmac
-import hashlib
-import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -30,7 +27,6 @@ oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="token", auto_error=False
 
 ACCESS_TOKEN_COOKIE_NAME = "brein_access_token"
 REFRESH_TOKEN_COOKIE_NAME = "brein_refresh_token"
-IMAGE_SIG_EXPIRY_SECONDS = 300
 
 
 async def get_token_cookie_or_bearer(
@@ -48,25 +44,6 @@ async def get_token_cookie_or_bearer(
         detail="Not authenticated",
         headers={"WWW-Authenticate": "Bearer"},
     )
-
-
-def create_image_sig(secret: str, instance_id: int, *parts: str) -> tuple[int, str]:
-    """Create short-lived exp and sig for image URLs so <img src> works without Bearer. Returns (exp_ts, sig)."""
-    exp_ts = int(time.time()) + IMAGE_SIG_EXPIRY_SECONDS
-    message = str(instance_id) + ":" + ":".join(parts) + ":" + str(exp_ts)
-    sig = hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
-    return exp_ts, sig
-
-
-def verify_image_sig(
-    secret: str, instance_id: int, exp_ts: int, sig: str, *parts: str
-) -> bool:
-    """Return True if sig is valid and not expired."""
-    if not secret or exp_ts < int(time.time()):
-        return False
-    message = str(instance_id) + ":" + ":".join(parts) + ":" + str(exp_ts)
-    expected = hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, sig)
 
 
 def _user_from_row(row: dict) -> User:
@@ -97,12 +74,21 @@ async def authenticate_user(
 ) -> tuple[User | None, str | None]:
     """
     Authenticate by username/password.
-    Returns (User, None) on success, (None, user_id) if password wrong, (None, None) if user not found.
+    Returns (User, None) on success, (None, user_id) if password wrong, (None, None) if user not found
+    or locked out after too many failures.
     Uses dummy hash when user not found to avoid timing attacks.
     For Emby/Jellyfin-linked users, credentials are verified against the media server API.
     """
     row = await store_users.get_user_by_username(username)
     if not row:
+        verify_password(password, DUMMY_HASH)
+        return None, None
+
+    if store_users.login_locked(row):
+        # Not a failure to record: the lockout is a fixed window after the
+        # last counted failure, and attempts made during it must not extend
+        # it. The password is not checked either, so the response is the same
+        # as for an unknown user — a locked account is not announced.
         verify_password(password, DUMMY_HASH)
         return None, None
 
@@ -236,64 +222,6 @@ async def get_current_user_optional(
         return await get_current_user(token)
     except HTTPException:
         return None
-
-
-async def get_current_user_or_image_sig(
-    request: Request,
-    token: Annotated[str | None, Depends(oauth2_scheme_optional)],
-    instance_id: int,
-) -> User | None:
-    """
-    Allow request if valid Bearer token OR valid exp+sig query params (for image proxy <img src>).
-    instance_id comes from route path. Returns User or None; image routes only need to ensure one or the other is valid.
-    """
-    if token:
-        try:
-            user = await get_current_user(token)
-            if not user.disabled:
-                return user
-        except HTTPException:
-            pass
-    if not brein_config.SECRET_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    q = request.query_params
-    exp_s = q.get("exp")
-    sig = q.get("sig")
-    if exp_s is None or sig is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    try:
-        exp_ts = int(exp_s)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    path = q.get("path")
-    if path is not None:
-        if verify_image_sig(brein_config.SECRET_KEY, instance_id, exp_ts, sig, path):
-            return None
-    else:
-        item_id = q.get("item_id", "")
-        type_ = q.get("type", "Primary")
-        tag = q.get("tag", "")
-        if verify_image_sig(
-            brein_config.SECRET_KEY, instance_id, exp_ts, sig, item_id, type_, tag
-        ):
-            return None
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
 
 
 async def get_current_admin_user(

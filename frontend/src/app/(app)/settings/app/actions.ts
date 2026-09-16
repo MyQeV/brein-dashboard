@@ -1,19 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { type ActionResult, toResult } from "@/lib/actions";
 import { ApiError, apiFetch, isRedirectError } from "@/lib/api";
-
-export type ActionResult =
-  | { ok: true; id?: number }
-  | { ok: false; error: string; status?: number };
-
-function toResult(error: unknown): ActionResult {
-  if (isRedirectError(error)) throw error;
-  if (error instanceof ApiError) {
-    return { ok: false, error: error.message, status: error.status };
-  }
-  return { ok: false, error: "Something went wrong. Please try again." };
-}
 
 export type InstanceInput = {
   label: string;
@@ -78,9 +67,8 @@ export async function createInstance(
   const port = input.port.trim();
   const sortOrder = input.sort_order.trim();
 
-  let created: { id: number };
   try {
-    created = await apiFetch<{ id: number; ok: boolean }>("/api/instances", {
+    await apiFetch<{ id: number; ok: boolean }>("/api/instances", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -98,7 +86,7 @@ export async function createInstance(
     return toResult(error);
   }
   revalidatePath("/settings/app");
-  return { ok: true, id: created.id };
+  return { ok: true };
 }
 
 export async function saveInstance(
@@ -115,7 +103,9 @@ export async function saveInstance(
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        label: input.label.trim() || null,
+        // The API keeps the stored value on null, so a cleared field has to
+        // be sent as what it is: an empty label, no port, the first slot.
+        label: input.label.trim(),
         host: input.host.trim(),
         port: port ? Number(port) : null,
         // null means "keep the stored key". The form never receives the real
@@ -123,7 +113,7 @@ export async function saveInstance(
         api_key: input.api_key ? input.api_key : null,
         external_url: input.external_url.trim(),
         active: input.active,
-        sort_order: sortOrder ? Number(sortOrder) : null,
+        sort_order: sortOrder ? Number(sortOrder) : 0,
       }),
     });
   } catch (error) {

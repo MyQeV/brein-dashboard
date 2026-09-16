@@ -8,7 +8,8 @@ runs in a single container per CLAUDE.md).
 Each ``_execute`` call:
   * opens a short bookkeeping session and creates a run row (status=running)
   * resolves the TaskType from the registry
-  * invokes ``TaskType.execute(task, instance, session)`` inside a try/except
+  * invokes ``TaskType.execute(task, instance, session)`` inside a try/except,
+    under a deadline of TASK_TIMEOUT_SECONDS
   * captures full traceback (truncated to 4000 chars) on error
   * updates the run row + the denormalized last_* columns on the task
 
@@ -22,6 +23,7 @@ import logging
 from brein import background
 import time
 import traceback
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import text
@@ -36,6 +38,12 @@ log = logging.getLogger(__name__)
 POLL_SECONDS = 5
 PRUNE_INTERVAL_SECONDS = 3600
 PRUNE_RETENTION_DAYS = 14
+# A task that never returns used to stay in _running_task_ids for the life
+# of the process, and the scheduler never ran it again.
+TASK_TIMEOUT_SECONDS = 600
+# Tasks that run more often than this only get a history row when they fail:
+# the ten-second now-playing broadcast alone wrote ~8.6k rows a day.
+RUN_HISTORY_MIN_INTERVAL_SECONDS = 60
 
 _running_task_ids: set[int] = set()
 
@@ -107,28 +115,45 @@ async def _execute(task_id: int) -> None:
                 await s.commit()
             return
 
-        async with get_session_factory()() as s:
-            run_id = await store.create_run(s, task_id)
-            await s.commit()
+        keep_history = (
+            int(task.get("interval_seconds") or 0) >= RUN_HISTORY_MIN_INTERVAL_SECONDS
+        )
+        started_at = datetime.now(timezone.utc)
+        if keep_history:
+            async with get_session_factory()() as s:
+                run_id = await store.create_run(s, task_id)
+                await s.commit()
 
         # Execute outside the bookkeeping session so long work doesn't hold a tx.
+        deadline = None
         try:
-            async with get_session_factory()() as work_session:
-                await tt.execute(task, instance, work_session)
-                await work_session.commit()
+            async with asyncio.timeout(TASK_TIMEOUT_SECONDS) as deadline:
+                async with get_session_factory()() as work_session:
+                    await tt.execute(task, instance, work_session)
+                    await work_session.commit()
             duration_ms = int((time.monotonic() - started) * 1000)
             async with get_session_factory()() as s:
-                await store.finish_run(
-                    s, run_id, status="success", duration_ms=duration_ms
-                )
+                if run_id is not None:
+                    await store.finish_run(
+                        s, run_id, status="success", duration_ms=duration_ms
+                    )
                 await store.update_task_last_run(
                     s, task_id, status="success", duration_ms=duration_ms
                 )
                 await s.commit()
         except asyncio.CancelledError:
             raise
-        except Exception:
-            tb = traceback.format_exc()
+        except Exception as exc:
+            # The deadline surfaces as TimeoutError too; only its own expiry
+            # is "timed out", a TimeoutError the task raised is a plain error.
+            if (
+                isinstance(exc, TimeoutError)
+                and deadline is not None
+                and deadline.expired()
+            ):
+                tb = f"timed out after {TASK_TIMEOUT_SECONDS}s"
+            else:
+                tb = traceback.format_exc()
             duration_ms = int((time.monotonic() - started) * 1000)
             log.warning(
                 "scheduler: task %s (%s) failed: %s",
@@ -138,6 +163,12 @@ async def _execute(task_id: int) -> None:
             )
             try:
                 async with get_session_factory()() as s:
+                    # A failure is always worth a row, even for a task whose
+                    # successes are not; it is created late, at its real start.
+                    if run_id is None:
+                        run_id = await store.create_run(
+                            s, task_id, started_at=started_at
+                        )
                     await store.finish_run(
                         s,
                         run_id,

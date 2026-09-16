@@ -4,11 +4,16 @@ import { createContext, type ReactNode, useContext } from "react";
 import type { NowPlayingSession } from "@/lib/types";
 import { type NowPlayingConnection, useNowPlaying } from "@/lib/use-now-playing";
 
-type Value = { sessions: NowPlayingSession[]; connection: NowPlayingConnection };
+type Value = {
+  sessions: NowPlayingSession[];
+  connection: NowPlayingConnection;
+  /** False until the first payload; see useNowPlaying. */
+  loaded: boolean;
+};
 
 const NowPlayingContext = createContext<Value | null>(null);
 
-/** One socket for the whole shell; the sidebar (and its drawer copy) read it. */
+/** One socket for the whole shell; the sidebar, its drawer copy and the Now playing page all read it. */
 export function NowPlayingProvider({ children }: { children: ReactNode }) {
   const value = useNowPlaying();
   return (

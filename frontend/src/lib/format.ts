@@ -11,6 +11,13 @@ export function formatDuration(seconds: number): string {
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
 }
 
+/** A scheduler interval: exact, so "90m" rather than a rounded "1h". */
+export function formatInterval(seconds: number): string {
+  if (seconds % 3600 === 0 && seconds >= 3600) return `${seconds / 3600}h`;
+  if (seconds % 60 === 0 && seconds >= 60) return `${seconds / 60}m`;
+  return `${seconds}s`;
+}
+
 /**
  * A playback clock: "4:07", or "1:04:07" once it passes an hour.
  *
@@ -26,8 +33,13 @@ export function formatClock(seconds: number): string {
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(secs)}` : `${minutes}:${pad(secs)}`;
 }
 
+/**
+ * Fixed locale, like formatDateTime: these render in client components the
+ * server has already rendered, and a browser set to nl-NL would otherwise
+ * hydrate "1,234" as "1.234" and warn about the mismatch.
+ */
 export function formatCount(value: number): string {
-  return value.toLocaleString();
+  return value.toLocaleString("en-GB");
 }
 
 // Indexed by Postgres EXTRACT(DOW), where 0 is Sunday — not ISO, where 1 is
@@ -51,18 +63,43 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Formatted on the server in a fixed zone so the value does not shift with the
- * viewer's clock, and does not differ between server and client render.
+ * One `Intl.DateTimeFormat` per locale, zone and option set, kept for the
+ * life of the module. Building one costs far more than formatting with it,
+ * and `toLocaleString` builds a new one per call — a drill of five hundred
+ * sessions paid that for every row each time a day was opened.
  */
-export function formatDateTime(value: unknown, timeZone = "UTC"): string {
+const FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+export function dateTimeFormatter(
+  locale: string,
+  options: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat {
+  const key = `${locale}|${JSON.stringify(options)}`;
+  let formatter = FORMATTERS.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, options);
+    FORMATTERS.set(key, formatter);
+  }
+  return formatter;
+}
+
+/**
+ * Formatted in a fixed locale and an explicit zone so the value does not shift
+ * with the viewer's clock, and does not differ between server and client
+ * render. The zone is the app's: `appTimeZone()` in a server component,
+ * `useTimeZone()` in a client one, or the `app_timezone` a metrics payload
+ * carries. It is required rather than defaulted so that a caller cannot
+ * quietly show UTC next to a page showing local time.
+ */
+export function formatDateTime(value: unknown, timeZone: string): string {
   if (typeof value !== "string" || !value) return "—";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString("en-GB", {
+  return dateTimeFormatter("en-GB", {
     timeZone,
     dateStyle: "short",
     timeStyle: "short",
-  });
+  }).format(parsed);
 }
 
 /** Read a dotted path out of an API record. */

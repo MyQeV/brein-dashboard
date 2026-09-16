@@ -1,15 +1,17 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { CONTROL_HEIGHT } from "@/components/ui/control";
+import { Select } from "@/components/ui/select";
 
 export function TablePicker({ tables, current }: { tables: string[]; current: string }) {
   const router = useRouter();
 
   return (
-    <label className="flex w-fit flex-col gap-1 text-sm">
+    <label htmlFor="database-table" className="flex w-fit flex-col gap-1 text-sm">
       Table
-      <select
+      <Select
+        id="database-table"
+        size="sm"
         value={current}
         onChange={(event) => {
           // Reset paging and sorting: page 4 of one table is meaningless in
@@ -18,14 +20,13 @@ export function TablePicker({ tables, current }: { tables: string[]; current: st
             `/settings/database?table=${encodeURIComponent(event.target.value)}`,
           );
         }}
-        className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
       >
         {tables.map((table) => (
           <option key={table} value={table}>
             {table}
           </option>
         ))}
-      </select>
+      </Select>
     </label>
   );
 }

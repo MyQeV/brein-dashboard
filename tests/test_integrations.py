@@ -209,6 +209,53 @@ async def test_sabnzbd_set_speed_limit_failure():
     assert ok is False
 
 
+# ── Connection tests refuse redirects ────────────────────────────────────────
+
+
+def _redirect(location: str) -> MagicMock:
+    r = _make_response(301)
+    r.headers = {"location": location}
+    return r
+
+
+@pytest.mark.asyncio
+async def test_emby_test_connection_fails_on_a_redirect():
+    """The clients never follow redirects, so an http:// URL a server answers
+    with 301-to-https passed the test and then failed every data call."""
+    from brein.integrations.api import emby
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(
+        return_value=_redirect("https://emby.example/System/Info?api_key=k")
+    )
+    with patch("brein.integrations.api.emby.get_http_client", return_value=mock_client):
+        ok, msg = await emby.test_connection("http://emby.example", "k")
+    assert ok is False
+    assert "https://emby.example/System/Info" in msg
+    assert "api_key" not in msg
+
+
+@pytest.mark.asyncio
+async def test_arr_test_connection_fails_on_a_redirect_and_on_any_non_200():
+    from brein.integrations.api import base
+
+    for response, expected in (
+        (_redirect("https://sonarr.example/api/v3/system/status"), "redirected"),
+        (_make_response(500), "HTTP 500"),
+        (_make_response(204), "HTTP 204"),
+    ):
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=response)
+        with patch(
+            "brein.integrations.api.base.get_http_client", return_value=mock_client
+        ):
+            ok, msg = await base.get_with_api_key(
+                "http://192.168.1.10:8989", "api/v3/system/status", "k"
+            )
+        assert ok is False
+        assert expected in msg
+
+
 # ── Emby / Jellyfin authorization ────────────────────────────────────────────
 
 
@@ -228,9 +275,7 @@ async def test_jellyfin_requests_send_the_authorization_header():
 
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=_make_response(200))
-    with patch(
-        "brein.integrations.api.base.get_http_client", return_value=mock_client
-    ):
+    with patch("brein.integrations.api.base.get_http_client", return_value=mock_client):
         ok, _ = await jellyfin.test_connection("http://jellyfin.local:8096", "abc123")
     assert ok is True
     sent = mock_client.get.call_args.kwargs["headers"]
@@ -245,13 +290,42 @@ async def test_media_server_login_sends_client_identity_in_both_forms():
 
     response = _make_response(200)
     response.json = MagicMock(return_value={"AccessToken": "t"})
-    mock_client = AsyncMock()
+    mock_client = MagicMock()
     mock_client.post = AsyncMock(return_value=response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    with patch("brein.integrations.api.emby.new_http_client", return_value=mock_client):
+    with patch("brein.integrations.api.emby.get_http_client", return_value=mock_client):
         ok, _ = await emby.authenticate_user("http://emby.local:8096", "u", "p")
     assert ok is True
     sent = mock_client.post.call_args.kwargs["headers"]
     assert sent["Authorization"].startswith("MediaBrowser Client=")
     assert sent["X-Emby-Authorization"] == sent["Authorization"]
+
+
+# ── Emby sessions ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_emby_get_sessions_returns_none_when_the_server_does_not_answer():
+    """None, not []: an empty list says nothing is playing, which would
+    close every live session on a server that merely failed to respond."""
+    import httpx
+
+    from brein.integrations.api import emby
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+    with patch("brein.integrations.api.emby.get_http_client", return_value=mock_client):
+        sessions = await emby.get_sessions("http://emby.local:8096", "abc123")
+    assert sessions is None
+
+
+@pytest.mark.asyncio
+async def test_emby_get_sessions_returns_an_empty_list_when_nothing_plays():
+    from brein.integrations.api import emby
+
+    response = _make_response(200)
+    response.json = MagicMock(return_value=[])
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=response)
+    with patch("brein.integrations.api.emby.get_http_client", return_value=mock_client):
+        sessions = await emby.get_sessions("http://emby.local:8096", "abc123")
+    assert sessions == []

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Card } from "@/components/ui/card";
 import { ApiNotice } from "@/components/ui/notice";
 import { softApiFetch } from "@/lib/api";
+import { appTimeZone } from "@/lib/timezone";
 import type { InstanceDetail, MediaUser, MediaUsersResponse } from "@/lib/types";
 import { UsersTable } from "./users-table";
 
@@ -51,7 +52,7 @@ export default async function InstanceUsersPage(
         canEdit={canEdit}
         // The app's zone — the same TZ the API runs on, as the dashboard
         // pages resolve it.
-        timeZone={process.env.TZ || "UTC"}
+        timeZone={appTimeZone()}
       />
     </Card>
   );

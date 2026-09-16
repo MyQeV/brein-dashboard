@@ -3,9 +3,11 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { CARD_TABLE } from "@/components/ui/table";
+import type { ActionResult } from "@/lib/actions";
 import { type ArrColumn, type ArrTab, renderArrCell } from "@/lib/arr-tabs";
 import { cn } from "@/lib/cn";
-import { type ActionResult, bulkDeleteRows } from "./actions";
+import { useTimeZone } from "@/lib/timezone-context";
+import { bulkDeleteRows } from "./actions";
 
 /**
  * The *arr list table, with row selection and a bulk delete.
@@ -36,6 +38,7 @@ export function SelectableArrTable({
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [result, setResult] = useState<ActionResult | null>(null);
   const [pending, startTransition] = useTransition();
+  const timeZone = useTimeZone();
 
   // Only rows the API can act on: the bulk endpoints key on the upstream id,
   // and a row without one cannot be part of the request.
@@ -181,7 +184,7 @@ export function SelectableArrTable({
                     disabled={id === null}
                     checked={checked}
                     onChange={() => id !== null && toggle(id)}
-                    aria-label={`Select ${renderArrCell(row, columns[0])}`}
+                    aria-label={`Select ${renderArrCell(row, columns[0], timeZone)}`}
                     className="cursor-pointer"
                   />
                 </td>
@@ -196,7 +199,7 @@ export function SelectableArrTable({
                       column.align === "right" && "text-right tabular-nums",
                     )}
                   >
-                    {renderArrCell(row, column)}
+                    {renderArrCell(row, column, timeZone)}
                   </td>
                 ))}
               </tr>

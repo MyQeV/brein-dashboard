@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/cn";
 
@@ -14,9 +14,27 @@ const TABS = [
   { href: "/dashboard/downloads", label: "Downloads" },
 ];
 
+/**
+ * The filters the tabs share, carried from one to the next. A bare tab link
+ * reopened every tab on its default range, so Watch time → Movies → Daily
+ * silently dropped the month the user had picked. Named as the pages read
+ * them (`firstParam(searchParams.start_date)` and so on); `days` is left
+ * out because the range bar derives the preset from the dates.
+ */
+const CARRIED_PARAMS = ["start_date", "end_date", "instance_ids", "user_ids"];
+
 export function DashboardNav() {
   const pathname = usePathname();
+  const params = useSearchParams();
   const navRef = useRef<HTMLElement | null>(null);
+
+  const carried = new URLSearchParams();
+  for (const key of CARRIED_PARAMS) {
+    const value = params.get(key);
+    if (value) carried.set(key, value);
+  }
+  const query = carried.toString();
+  const suffix = query ? `?${query}` : "";
 
   // The strip scrolls on phones with its scrollbar hidden; without this the
   // current tab can sit off-screen with no hint that there is more.
@@ -38,7 +56,7 @@ export function DashboardNav() {
         return (
           <Link
             key={tab.href}
-            href={tab.href}
+            href={`${tab.href}${suffix}`}
             aria-current={active ? "page" : undefined}
             className={cn(
               "shrink-0 border-b-2 px-3 py-2 text-sm",

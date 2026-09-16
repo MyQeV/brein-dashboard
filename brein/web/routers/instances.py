@@ -10,16 +10,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from brein import background
 from brein.db import get_session_factory
 from brein.jobs.emby_items_sync import run_emby_items_sync_for_instance
+from brein.jobs.jellyfin_items_sync import run_jellyfin_items_sync_for_instance
 from brein.jobs.plex_items_sync import run_plex_items_sync_for_instance
 from brein.integrations.websockets import registry as ws_registry
 from brein.jobs.scheduled_task_reconciler import reconcile as reconcile_scheduled_tasks
 from brein.store import emby_items as store_emby_items
+from brein.store import jellyfin_items as store_jellyfin_items
 from brein.store import plex_items as store_plex_items
 from brein.integrations import emby as emby_integration
 from brein.integrations import plex as plex_integration
 from brein.integrations.registry import test_service as integration_test_service
 from brein.web import auth as web_auth
 from brein.web import instance_settings
+from brein.web.dependencies import require_instance_config
 from brein.web.schemas import (
     InstanceCreateBody,
     InstanceProbeBody,
@@ -35,11 +38,35 @@ router = APIRouter()
 CurrentUser = Annotated[User, Depends(web_auth.get_current_active_user)]
 AdminUser = Annotated[User, Depends(web_auth.get_current_admin_user)]
 
+# Per media server: has its library been scanned, and the one-off scan to
+# queue when it has not.
+_ITEMS_SYNC = {
+    "emby": (store_emby_items.get_last_scan_date, run_emby_items_sync_for_instance),
+    "jellyfin": (
+        store_jellyfin_items.get_last_scan_date,
+        run_jellyfin_items_sync_for_instance,
+    ),
+    "plex": (store_plex_items.get_last_scan_date, run_plex_items_sync_for_instance),
+}
+
+
+_CONNECTION_KEYS = ("host", "port", "external_url", "api_key_masked")
+
+
+def _for_viewer(inst: dict, current_user: User) -> dict:
+    """Viewers get what the instance pages render (id, label, app_url, ...);
+    the connection fields are admin-only. app_url stays: the deep links need
+    it, and with no external_url it is built from host and port anyway."""
+    if current_user.is_admin:
+        return inst
+    return {k: v for k, v in inst.items() if k not in _CONNECTION_KEYS}
+
 
 @router.get("/api/instances")
 async def api_list_instances(current_user: CurrentUser):
     """List all app instances with is_configured."""
-    return {"instances": await store_instances.list_instances()}
+    instances = await store_instances.list_instances()
+    return {"instances": [_for_viewer(i, current_user) for i in instances]}
 
 
 def _connection_fields(host: str | None, api_key: str | None) -> tuple[str, str]:
@@ -47,7 +74,9 @@ def _connection_fields(host: str | None, api_key: str | None) -> tuple[str, str]
     host = (host or "").strip()
     api_key = (api_key or "").strip()
     if bool(host) != bool(api_key):
-        raise HTTPException(status_code=400, detail="Host and API key are both required")
+        raise HTTPException(
+            status_code=400, detail="Host and API key are both required"
+        )
     return host, api_key
 
 
@@ -62,7 +91,9 @@ async def api_probe_connection(body: InstanceProbeBody, current_user: AdminUser)
         raise HTTPException(status_code=404, detail="Unknown service_type")
     host, api_key = _connection_fields(body.host, body.api_key)
     if not host:
-        raise HTTPException(status_code=400, detail="Host and API key are both required")
+        raise HTTPException(
+            status_code=400, detail="Host and API key are both required"
+        )
     base_url = store_instances.build_base_url(host, body.port, body.service_type)
     ok, message = await integration_test_service(body.service_type, base_url, api_key)
     return {"ok": ok, "message": message}
@@ -82,7 +113,9 @@ async def api_create_instance(body: InstanceCreateBody, current_user: AdminUser)
     host, api_key = _connection_fields(body.host, body.api_key)
     if host:
         base_url = store_instances.build_base_url(host, body.port, body.service_type)
-        ok, message = await integration_test_service(body.service_type, base_url, api_key)
+        ok, message = await integration_test_service(
+            body.service_type, base_url, api_key
+        )
         if not ok:
             raise HTTPException(
                 status_code=400, detail=f"Connection test failed: {message}"
@@ -111,7 +144,36 @@ async def api_get_instance(instance_id: int, current_user: CurrentUser):
     inst = await store_instances.get_instance(instance_id)
     if not inst:
         raise HTTPException(status_code=404, detail="Instance not found")
-    return inst
+    return _for_viewer(inst, current_user)
+
+
+async def _record_server_info(
+    instance_id: int, service_type: str, base_url: str, api_key: str
+) -> None:
+    """Store the media server's own id, which its deep links need.
+
+    Emby and Jellyfin both report it as Id from System/Info, read here with
+    the Emby client whose headers serve either server; Plex calls it the
+    machineIdentifier. A failure is logged, never raised: the connection was
+    saved or tested fine, this is bookkeeping on top.
+    """
+    try:
+        if service_type in ("emby", "jellyfin"):
+            ok, data = await emby_integration.get_system_info(base_url, api_key)
+            if ok and data and isinstance(data.get("Id"), str):
+                await store_instances.set_instance_server_info(
+                    instance_id, media_server_id=data["Id"]
+                )
+        elif service_type == "plex":
+            ok, data = await plex_integration.get_identity(base_url, api_key)
+            if ok and data and data.get("machineIdentifier"):
+                await store_instances.set_instance_server_info(
+                    instance_id,
+                    media_server_id=data["machineIdentifier"],
+                    server_version=data.get("version") or "",
+                )
+    except Exception:
+        log.exception("Could not record server info for instance %s", instance_id)
 
 
 async def _connection_changed(instance_id: int) -> None:
@@ -124,46 +186,16 @@ async def _connection_changed(instance_id: int) -> None:
     cfg = await store_instances.get_instance_connection_config(instance_id)
     if cfg:
         service_type, base_url, api_key = cfg
-        if service_type == "emby" and base_url and api_key:
-            try:
-                ok, data = await emby_integration.get_system_info(base_url, api_key)
-                if ok and data and isinstance(data.get("Id"), str):
-                    await store_instances.set_instance_server_info(
-                        instance_id, media_server_id=data["Id"]
-                    )
-            except Exception:
-                log.exception(
-                    "Could not read Emby system info for instance %s", instance_id
-                )
-            if not await store_emby_items.get_last_scan_date(instance_id):
+        if base_url and api_key:
+            await _record_server_info(instance_id, service_type, base_url, api_key)
+            sync = _ITEMS_SYNC.get(service_type)
+            if sync and not await sync[0](instance_id):
                 background.spawn(
-                    run_emby_items_sync_for_instance(instance_id),
-                    f"emby_items_sync[{instance_id}]",
+                    sync[1](instance_id), f"{service_type}_items_sync[{instance_id}]"
                 )
                 log.info(
-                    "Emby items sync: scheduled initial sync for instance %s",
-                    instance_id,
-                )
-        if service_type == "plex" and base_url and api_key:
-            try:
-                ok, data = await plex_integration.get_identity(base_url, api_key)
-                if ok and data and data.get("machineIdentifier"):
-                    await store_instances.set_instance_server_info(
-                        instance_id,
-                        media_server_id=data["machineIdentifier"],
-                        server_version=data.get("version") or "",
-                    )
-            except Exception:
-                log.exception(
-                    "Could not read Plex identity for instance %s", instance_id
-                )
-            if not await store_plex_items.get_last_scan_date(instance_id):
-                background.spawn(
-                    run_plex_items_sync_for_instance(instance_id),
-                    f"plex_items_sync[{instance_id}]",
-                )
-                log.info(
-                    "Plex items sync: scheduled initial sync for instance %s",
+                    "%s items sync: scheduled initial sync for instance %s",
+                    service_type,
                     instance_id,
                 )
     # Scheduled-task names embed the instance label, so a rename leaves the
@@ -182,10 +214,35 @@ async def _connection_changed(instance_id: int) -> None:
 async def api_put_instance(
     instance_id: int, body: InstanceUpdateBody, current_user: AdminUser
 ):
-    """Update instance; omit or null keeps existing."""
-    inst = await store_instances.get_instance(instance_id)
+    """Update instance; omit or null keeps existing.
+
+    A changed host, port or key is tested before it is stored, as on create:
+    saving untested, the old connection was gone and the new one had never
+    answered.
+    """
+    inst = await store_instances.get_instance(instance_id, mask_api_key=False)
     if not inst:
         raise HTTPException(status_code=404, detail="Instance not found")
+    current = (
+        (inst.get("host") or "").strip(),
+        inst.get("port"),
+        (inst.get("api_key") or "").strip(),
+    )
+    host = (body.host if body.host is not None else current[0]).strip()
+    port = body.port if body.port is not None else current[1]
+    api_key = (body.api_key if body.api_key is not None else current[2]).strip()
+    if (host, port, api_key) != current:
+        host, api_key = _connection_fields(host, api_key)
+        if host:
+            service_type = inst.get("service_type") or ""
+            base_url = store_instances.build_base_url(host, port, service_type)
+            ok, message = await integration_test_service(
+                service_type, base_url, api_key
+            )
+            if not ok:
+                raise HTTPException(
+                    status_code=400, detail=f"Connection test failed: {message}"
+                )
     try:
         await store_instances.update_instance(
             instance_id,
@@ -326,7 +383,6 @@ async def api_instance_user_dashboard(
     from datetime import date, timedelta
 
     from brein.config import get_local_date
-    from brein.db import get_session_factory
     from brein.store import emby_users as store_emby_users
     from brein.store import metrics_users as store_metrics_users
 
@@ -439,12 +495,7 @@ async def api_instance_settings_info(instance_id: int, current_user: AdminUser):
     Admin-only: it returns the target service's version, health messages and
     host configuration.
     """
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
+    service_type, base_url, api_key = await require_instance_config(instance_id)
     return await instance_settings.load_settings_info(
         service_type, base_url, api_key, instance_id
     )
@@ -453,37 +504,10 @@ async def api_instance_settings_info(instance_id: int, current_user: AdminUser):
 @router.post("/api/instances/{instance_id}/test")
 async def api_test_instance(instance_id: int, current_user: AdminUser):
     """Test connection using instance's stored config (host/port/api_key)."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
+    service_type, base_url, api_key = await require_instance_config(instance_id)
     ok, message = await integration_test_service(service_type, base_url, api_key)
-    if ok and service_type == "emby":
-        try:
-            sys_ok, data = await emby_integration.get_system_info(base_url, api_key)
-            if sys_ok and data and isinstance(data.get("Id"), str):
-                await store_instances.set_instance_server_info(
-                    instance_id, media_server_id=data["Id"]
-                )
-        except Exception:
-            log.exception(
-                "Could not record Emby server info for instance %s", instance_id
-            )
-    if ok and service_type == "plex":
-        try:
-            id_ok, data = await plex_integration.get_identity(base_url, api_key)
-            if id_ok and data and data.get("machineIdentifier"):
-                await store_instances.set_instance_server_info(
-                    instance_id,
-                    media_server_id=data["machineIdentifier"],
-                    server_version=data.get("version") or "",
-                )
-        except Exception:
-            log.exception(
-                "Could not record Plex server info for instance %s", instance_id
-            )
+    if ok:
+        await _record_server_info(instance_id, service_type, base_url, api_key)
     return {"ok": ok, "message": message}
 
 
@@ -500,10 +524,7 @@ async def api_instance_download_speed(
     if cached is not None:
         return cached
 
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    st, base_url, api_key = cfg
+    st, base_url, api_key = await require_instance_config(instance_id)
     adapter = load_extensions().downloaders.get(st)
     if adapter is None:
         raise HTTPException(status_code=404, detail="Not a downloader instance")

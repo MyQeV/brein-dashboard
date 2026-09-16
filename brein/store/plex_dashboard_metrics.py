@@ -13,8 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from brein import config as brein_config
 from brein.db import get_session_factory
+from brein.store import plex_playback_sessions as store_plex_playback
 from brein.store.metrics_helpers import (
     _UTC_TEXT_WINDOW,
+    _snapshot_rebuild_since,
+    _snapshot_since_params,
     _user_instance_filter as _shared_user_instance_filter,
     _utc_window_params,
 )
@@ -22,6 +25,27 @@ from brein.store.metrics_helpers import (
 log = logging.getLogger(__name__)
 
 _rebuild_lock = asyncio.Lock()
+# The finalised-session marker only covers this process, so the first
+# rebuild after boot — and the one after a failed pass — is a full one.
+_snapshot_full_pending = True
+
+
+def _item_type_case(raw: str) -> str:
+    """Normalise a raw Plex type expression to the snapshot's item_type words.
+
+    The snapshot writes 'Movie'/'Episode'/'LiveTV'/'Audio'/'Other'; the
+    user-filtered most-watched path used to return MAX(i.type) — 'movie' —
+    so the same tile changed vocabulary depending on the filter.
+    """
+    return f"""CASE LOWER(TRIM(COALESCE({raw}, '')))
+                        WHEN 'movie' THEN 'Movie'
+                        WHEN 'episode' THEN 'Episode'
+                        WHEN 'livetvchannel' THEN 'LiveTV'
+                        WHEN 'program' THEN 'LiveTV'
+                        WHEN 'track' THEN 'Audio'
+                        WHEN 'album' THEN 'Audio'
+                        ELSE 'Other'
+                    END"""
 
 
 def _local_date_expr(col: str, tz_param: str = "tz") -> str:
@@ -73,27 +97,44 @@ def _date_range_where(
     )
 
 
-async def rebuild_snapshots(instance_id: int | None = None) -> None:
-    """Delete and re-populate the three snapshot tables from sessions + items + users.
+async def rebuild_snapshots(
+    instance_id: int | None = None, since_date: str | None = None
+) -> None:
+    """Re-populate the three snapshot tables from sessions + items + users.
 
-    Serialized via _rebuild_lock so concurrent callers (now-playing poller +
-    scheduled task) don't race on DELETE/INSERT and trip a unique-violation.
+    With ``since_date`` (a local YYYY-MM-DD stat_date) only that day and later
+    are deleted and re-aggregated; without it every row is. The three tables
+    share one bound and one transaction, so they never disagree with each
+    other. Serialized via _rebuild_lock so concurrent callers (now-playing
+    poller + scheduled task) don't race on DELETE/INSERT and trip a
+    unique-violation.
     """
     async with _rebuild_lock, get_session_factory()() as session:
+        tz = brein_config.TIMEZONE
+        ld = _local_date_expr("s.start_time", "tz")
+
         inst_filter = ""
         inst_params: dict[str, Any] = {}
+        del_where: list[str] = []
         if instance_id is not None:
             inst_filter = " AND s.instance_id = :instance_id"
             inst_params = {"instance_id": instance_id}
+            del_where.append("instance_id = :instance_id")
 
-        inst_del_filter = ""
-        inst_del_params: dict[str, Any] = {}
-        if instance_id is not None:
-            inst_del_filter = " WHERE instance_id = :instance_id"
-            inst_del_params = {"instance_id": instance_id}
+        # The raw-text prefilter lets the start_time index prune the scan; the
+        # local-date predicate decides, and matches the DELETE's bound exactly.
+        since_filter = ""
+        since_params: dict[str, Any] = {}
+        if since_date:
+            since_filter = f" AND s.start_time >= :since_lo AND {ld} >= :since_date"
+            since_params = _snapshot_since_params(since_date)
+            del_where.append("stat_date >= :since_date")
 
-        tz = brein_config.TIMEZONE
-        ld = _local_date_expr("s.start_time", "tz")
+        inst_del_filter = (" WHERE " + " AND ".join(del_where)) if del_where else ""
+        inst_del_params: dict[str, Any] = {**inst_params}
+        if since_date:
+            inst_del_params["since_date"] = since_date
+        sel_params: dict[str, Any] = {"tz": tz, **inst_params, **since_params}
 
         # --- plex_metrics_snapshot (daily totals) ---
         await session.execute(
@@ -117,11 +158,11 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
                 FROM plex_playback_sessions s
                 LEFT JOIN plex_items i
                     ON i.instance_id = s.instance_id AND i.item_id = s.rating_key
-                WHERE 1=1 {inst_filter}
+                WHERE 1=1 {inst_filter}{since_filter}
                 GROUP BY {ld}, s.instance_id
                 """
             ),
-            {"tz": tz, **inst_params},
+            sel_params,
         )
 
         # --- plex_metrics_snapshot_user (daily per-user) ---
@@ -151,11 +192,11 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
                 -- so a single such row failed the whole rebuild on every run.
                 -- Emby and Jellyfin exclude the same case when building
                 -- sessions; Plex never did.
-                WHERE s.account_id IS NOT NULL {inst_filter}
+                WHERE s.account_id IS NOT NULL {inst_filter}{since_filter}
                 GROUP BY {ld}, s.instance_id, s.account_id
                 """
             ),
-            {"tz": tz, **inst_params},
+            sel_params,
         )
 
         # --- plex_metrics_snapshot_item (daily per-item, denormalized) ---
@@ -174,15 +215,7 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
                     s.instance_id,
                     s.rating_key AS item_id,
                     i.name,
-                    CASE LOWER(TRIM(COALESCE(i.type, MAX(s.item_type), '')))
-                        WHEN 'movie' THEN 'Movie'
-                        WHEN 'episode' THEN 'Episode'
-                        WHEN 'livetvchannel' THEN 'LiveTV'
-                        WHEN 'program' THEN 'LiveTV'
-                        WHEN 'track' THEN 'Audio'
-                        WHEN 'album' THEN 'Audio'
-                        ELSE 'Other'
-                    END,
+                    {_item_type_case("i.type, MAX(s.item_type)")},
                     i.series_id,
                     series_item.name,
                     CASE
@@ -208,19 +241,41 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
                 -- rows for a primary key of (stat_date, instance_id,
                 -- item_id): a unique violation that failed every Plex rebuild
                 -- until those rows aged out. Aggregated above instead.
-                WHERE s.rating_key IS NOT NULL {inst_filter}
+                WHERE s.rating_key IS NOT NULL {inst_filter}{since_filter}
                 GROUP BY {ld}, s.instance_id, s.rating_key,
                          i.name, i.type, i.series_id, series_item.name
                 """
             ),
-            {"tz": tz, **inst_params},
+            sel_params,
         )
 
         await session.commit()
         log.info(
-            "Plex dashboard snapshots rebuilt%s",
+            "Plex dashboard snapshots rebuilt%s%s",
             f" for instance_id={instance_id}" if instance_id is not None else "",
+            f" since {since_date}" if since_date else "",
         )
+
+
+async def refresh_snapshots() -> None:
+    """Rebuild only what the sessions finalised since the last call can have changed.
+
+    Nothing finalised means nothing to do. The periodic caller used to run
+    the full rebuild every pass, re-aggregating every session ever stored.
+    """
+    global _snapshot_full_pending
+    changed_at = store_plex_playback.take_snapshot_since()
+    since_date: str | None = None
+    if not _snapshot_full_pending:
+        if changed_at is None:
+            return
+        since_date = _snapshot_rebuild_since(changed_at)
+    _snapshot_full_pending = False
+    try:
+        await rebuild_snapshots(since_date=since_date)
+    except Exception:
+        _snapshot_full_pending = True
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -228,69 +283,57 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _get_total_plays(
+async def _get_snapshot_totals(
     session: AsyncSession,
     start_date: str,
     end_date: str,
     instance_id: int | list[int] | None = None,
     user_ids: list[str] | None = None,
-) -> int:
+) -> dict[str, int]:
+    """The scalar tiles that come straight off a snapshot table, in one query.
+
+    Without a user filter that is plays, watch time, episodes and live TV
+    from plex_metrics_snapshot; with one, plays and watch time from
+    plex_metrics_snapshot_user (episodes and live TV then need the sessions —
+    see the per-tile helpers). One round trip instead of four on a session
+    that cannot run them concurrently anyway.
+    """
     dr, dr_p = _date_range_where(start_date, end_date)
     inst_w, inst_p = _instance_filter(instance_id)
     if user_ids:
         usr_w, usr_p = _user_instance_filter(
             user_ids, "instance_id", "CAST(user_id AS TEXT)"
         )
-        params = {**dr_p, **inst_p, **usr_p}
-        result = await session.execute(
+        row = (
+            await session.execute(
+                text(
+                    f"SELECT COALESCE(SUM(plays), 0), COALESCE(SUM(watch_time_seconds), 0)"
+                    f" FROM plex_metrics_snapshot_user WHERE 1=1{dr}{inst_w}{usr_w}"
+                ),
+                {**dr_p, **inst_p, **usr_p},
+            )
+        ).fetchone()
+        return {
+            "total_plays": int(row[0]) if row else 0,
+            "total_watch_time_seconds": int(row[1]) if row else 0,
+        }
+    row = (
+        await session.execute(
             text(
-                f"SELECT COALESCE(SUM(plays), 0) FROM plex_metrics_snapshot_user WHERE 1=1{dr}{inst_w}{usr_w}"
-            ),
-            params,
-        )
-    else:
-        params = {**dr_p, **inst_p}
-        result = await session.execute(
-            text(
-                f"SELECT COALESCE(SUM(total_plays), 0) FROM plex_metrics_snapshot WHERE 1=1{dr}{inst_w}"
-            ),
-            params,
-        )
-    row = result.fetchone()
-    return int(row[0]) if row else 0
-
-
-async def _get_total_watch_time_seconds(
-    session: AsyncSession,
-    start_date: str,
-    end_date: str,
-    instance_id: int | list[int] | None = None,
-    user_ids: list[str] | None = None,
-) -> int:
-    dr, dr_p = _date_range_where(start_date, end_date)
-    inst_w, inst_p = _instance_filter(instance_id)
-    if user_ids:
-        usr_w, usr_p = _user_instance_filter(
-            user_ids, "instance_id", "CAST(user_id AS TEXT)"
-        )
-        params = {**dr_p, **inst_p, **usr_p}
-        result = await session.execute(
-            text(
-                f"SELECT COALESCE(SUM(watch_time_seconds), 0) FROM plex_metrics_snapshot_user WHERE 1=1{dr}{inst_w}{usr_w}"
-            ),
-            params,
-        )
-    else:
-        params = {**dr_p, **inst_p}
-        result = await session.execute(
-            text(
-                f"SELECT COALESCE(SUM(total_watch_time_seconds), 0)"
+                f"SELECT COALESCE(SUM(total_plays), 0),"
+                f" COALESCE(SUM(total_watch_time_seconds), 0),"
+                f" COALESCE(SUM(total_episodes), 0), COALESCE(SUM(total_live_tv), 0)"
                 f" FROM plex_metrics_snapshot WHERE 1=1{dr}{inst_w}"
             ),
-            params,
+            {**dr_p, **inst_p},
         )
-    row = result.fetchone()
-    return int(row[0]) if row else 0
+    ).fetchone()
+    return {
+        "total_plays": int(row[0]) if row else 0,
+        "total_watch_time_seconds": int(row[1]) if row else 0,
+        "total_watched_episodes": int(row[2]) if row else 0,
+        "total_watched_live_tv": int(row[3]) if row else 0,
+    }
 
 
 async def _get_total_watched_movies(
@@ -622,7 +665,7 @@ async def _get_most_watched_items(
                     s.instance_id,
                     s.rating_key AS item_id,
                     MAX(i.name) AS item_name,
-                    MAX(i.type) AS item_type,
+                    {_item_type_case("MAX(i.type), MAX(s.item_type)")} AS item_type,
                     CASE
                         WHEN LOWER(MAX(COALESCE(i.type, s.item_type, ''))) IN ('episode')
                              AND MAX(si.name) IS NOT NULL
@@ -1437,15 +1480,24 @@ async def get_all_metrics(
 ) -> dict[str, Any]:
     """Return all dashboard metrics for the date range from Plex snapshot tables."""
     async with get_session_factory()() as session:
-        total_plays = await _get_total_plays(
+        totals = await _get_snapshot_totals(
             session, start_date, end_date, instance_id, user_ids
         )
-        total_watch_time = await _get_total_watch_time_seconds(
-            session, start_date, end_date, instance_id, user_ids
-        )
+        total_plays = totals["total_plays"]
+        total_watch_time = totals["total_watch_time_seconds"]
         avg_session_seconds = (
             round(total_watch_time / total_plays) if total_plays > 0 else 0
         )
+        if user_ids:
+            total_episodes = await _get_total_watched_episodes(
+                session, start_date, end_date, instance_id, user_ids
+            )
+            total_live_tv = await _get_total_watched_live_tv(
+                session, start_date, end_date, instance_id, user_ids
+            )
+        else:
+            total_episodes = totals["total_watched_episodes"]
+            total_live_tv = totals["total_watched_live_tv"]
         return {
             "start_date": start_date,
             "end_date": end_date,
@@ -1467,15 +1519,11 @@ async def get_all_metrics(
             "total_watched_movies": await _get_total_watched_movies(
                 session, start_date, end_date, instance_id, user_ids
             ),
-            "total_watched_episodes": await _get_total_watched_episodes(
-                session, start_date, end_date, instance_id, user_ids
-            ),
+            "total_watched_episodes": total_episodes,
             "total_watched_series": await _get_total_watched_series(
                 session, start_date, end_date, instance_id, user_ids
             ),
-            "total_watched_live_tv": await _get_total_watched_live_tv(
-                session, start_date, end_date, instance_id, user_ids
-            ),
+            "total_watched_live_tv": total_live_tv,
             "watch_time_by_media_type": await _get_watch_time_by_media_type(
                 session, start_date, end_date, instance_id, user_ids
             ),

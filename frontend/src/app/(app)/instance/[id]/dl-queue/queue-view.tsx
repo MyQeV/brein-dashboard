@@ -6,11 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CONTROL_HEIGHT } from "@/components/ui/control";
 import { CARD_TABLE } from "@/components/ui/table";
+import type { ActionResult } from "@/lib/actions";
 import { cn } from "@/lib/cn";
 import { formatBytes } from "@/lib/format";
 import type { DownloadQueue } from "@/lib/types";
 import {
-  type ActionResult,
   deleteItem,
   pauseItem,
   pauseQueue,

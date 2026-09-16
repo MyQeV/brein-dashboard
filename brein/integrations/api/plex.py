@@ -11,6 +11,8 @@ import httpx
 from brein.integrations.api.base import (
     DEFAULT_HTTP_TIMEOUT,
     new_http_client,
+    normalize_base_url,
+    redirect_message,
 )
 
 log = logging.getLogger(__name__)
@@ -147,19 +149,23 @@ def _parse_history_response_body(body: str) -> tuple[list[dict[str, Any]], int |
 
 
 def _normalize_base_url(base_url: str) -> str | None:
-    """Strip and validate base_url; return cleaned URL or None if invalid."""
-    base = (base_url or "").strip().rstrip("/")
+    """normalize_base_url, plus the scheme check; None if invalid."""
+    base = normalize_base_url(base_url)
     if not base.startswith(("http://", "https://")):
         return None
     return base
 
 
 async def test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
-    """Test connection to Plex (GET /identity with X-Plex-Token). Returns (success, message)."""
+    """Test connection to Plex (GET /library/sections with X-Plex-Token). Returns (success, message).
+
+    /identity is served without a token, so probing it passed any token at
+    all; /library/sections is refused without a valid one.
+    """
     base = _normalize_base_url(base_url)
     if not base:
         return False, "Invalid base URL"
-    url = urljoin(base + "/", "identity")
+    url = urljoin(base + "/", "library/sections")
     headers = (
         {**_PLEX_HEADERS_BASE, "X-Plex-Token": api_key}
         if api_key
@@ -168,9 +174,11 @@ async def test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
     try:
         async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
             r = await client.get(url, headers=headers)
+            if 300 <= r.status_code < 400:
+                return False, redirect_message(r)
             if r.status_code == 401:
                 return False, "Invalid token"
-            if r.status_code >= 400:
+            if r.status_code != 200:
                 return False, f"HTTP {r.status_code}"
             return True, "OK"
     except httpx.ConnectError as e:

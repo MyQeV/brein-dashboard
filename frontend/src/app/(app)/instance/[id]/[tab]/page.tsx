@@ -5,8 +5,10 @@ import { Card } from "@/components/ui/card";
 import { ApiNotice } from "@/components/ui/notice";
 import { softApiFetch } from "@/lib/api";
 import { arrTabsFor, renderArrCell } from "@/lib/arr-tabs";
+import { formatCount } from "@/lib/format";
 import { buildQuery, clampPage, clampPageSize } from "@/lib/params";
 import { fetchServiceTypes } from "@/lib/service-types-server";
+import { appTimeZone } from "@/lib/timezone";
 import type { InstanceDetail } from "@/lib/types";
 import { SelectableArrTable } from "./selectable-table";
 import { TabActions } from "./tab-actions";
@@ -43,9 +45,11 @@ export default async function InstanceArrTabPage(
   const { id, tab } = await props.params;
   const searchParams = await props.searchParams;
 
-  const [instanceResult, types] = await Promise.all([
+  const [instanceResult, types, prefs] = await Promise.all([
     softApiFetch<InstanceDetail>(`/api/instances/${id}`),
     fetchServiceTypes(),
+    // Soft: the saved page size is a nicety, not a reason to lose the tab.
+    softApiFetch<Record<string, unknown>>("/api/user/preferences"),
   ]);
   if (!instanceResult.ok) {
     return (
@@ -68,7 +72,15 @@ export default async function InstanceArrTabPage(
   }
 
   const page = clampPage(searchParams.page);
-  const pageSize = clampPageSize(searchParams.per_page, 25);
+  // The size saved on the profile page (`list_pagesize_<service>_<tab>`) is
+  // the default; an explicit ?per_page= still wins. Clamped like the param,
+  // since a stored value is no more trusted than a typed one.
+  const saved = prefs.ok ? prefs.data[`list_pagesize_${service}_${tab}`] : undefined;
+  const defaultPageSize = clampPageSize(
+    typeof saved === "number" ? String(saved) : undefined,
+  );
+  const pageSize = clampPageSize(searchParams.per_page, defaultPageSize);
+  const timeZone = appTimeZone();
   const query = config.paged
     ? buildQuery({ page, [config.pageSizeParam ?? "pageSize"]: pageSize })
     : "";
@@ -89,7 +101,7 @@ export default async function InstanceArrTabPage(
 
   return (
     <Card
-      title={`${config.title}${total ? ` (${total.toLocaleString()})` : ""}`}
+      title={`${config.title}${total ? ` (${formatCount(total)})` : ""}`}
       actions={
         config.commands || config.testAll ? (
           <TabActions
@@ -104,7 +116,11 @@ export default async function InstanceArrTabPage(
       }
     >
       {config.bulkDelete ? (
+        // Keyed on the page: the selection is client state, and without this
+        // ids ticked on page 1 stayed counted on page 2 with nothing visibly
+        // checked, and "all selected" could be true with zero ticks showing.
         <SelectableArrTable
+          key={`${tab}-${page}-${pageSize}`}
           instanceId={Number(id)}
           service={service}
           tab={tab}
@@ -123,7 +139,8 @@ export default async function InstanceArrTabPage(
             key: column.key,
             header: column.header,
             align: column.align,
-            render: (row: Record<string, unknown>) => renderArrCell(row, column),
+            render: (row: Record<string, unknown>) =>
+              renderArrCell(row, column, timeZone),
           }))}
         />
       )}

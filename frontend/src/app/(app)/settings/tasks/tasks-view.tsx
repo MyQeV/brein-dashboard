@@ -1,23 +1,19 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CONTROL_HEIGHT } from "@/components/ui/control";
 import { CARD_TABLE } from "@/components/ui/table";
 import { cn } from "@/lib/cn";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, formatInterval } from "@/lib/format";
+import { useTimeZone } from "@/lib/timezone-context";
 import type { ScheduledTask } from "@/lib/types";
 import { runTaskNow, setTaskEnabled, setTaskInterval } from "./actions";
 
 const MIN_INTERVAL = 5;
 const MAX_INTERVAL = 86400;
-
-function formatInterval(seconds: number): string {
-  if (seconds % 3600 === 0 && seconds >= 3600) return `${seconds / 3600}h`;
-  if (seconds % 60 === 0 && seconds >= 60) return `${seconds / 60}m`;
-  return `${seconds}s`;
-}
 
 function TaskRow({
   task,
@@ -28,6 +24,7 @@ function TaskRow({
 }) {
   const [interval, setIntervalValue] = useState(String(task.interval_seconds));
   const [pending, startTransition] = useTransition();
+  const timeZone = useTimeZone();
 
   function act(action: () => Promise<{ ok: boolean; error?: string }>) {
     onError(null);
@@ -51,7 +48,9 @@ function TaskRow({
   return (
     <tr className={CARD_TABLE.row}>
       <td className={CARD_TABLE.lead}>
-        <span className="block">{task.name}</span>
+        <Link href={`/settings/tasks/${task.id}`} className="block hover:underline">
+          {task.name}
+        </Link>
         <span className="block font-mono text-xs font-normal text-muted">{task.key}</span>
       </td>
       <td data-label="Interval (s)" className={CARD_TABLE.cell}>
@@ -85,10 +84,15 @@ function TaskRow({
         </span>
       </td>
       <td data-label="Last run" className={cn(CARD_TABLE.cell, "text-sm text-muted")}>
-        {formatDateTime(task.last_run_at)}
+        {formatDateTime(task.last_run_at, timeZone)}
       </td>
       <td data-label="Next due" className={cn(CARD_TABLE.cell, "text-sm text-muted")}>
-        {formatDateTime(task.next_due_at)}
+        {/* Due is last run plus interval, so a task that has never run (or
+            was just told to run now, which clears its last run) is due on
+            the scheduler's next poll. */}
+        {task.next_due_at === null && task.last_run_at === null
+          ? "now"
+          : formatDateTime(task.next_due_at, timeZone)}
       </td>
       <td className={CARD_TABLE.bare}>
         <div className="flex justify-end gap-2 max-lg:pt-1">

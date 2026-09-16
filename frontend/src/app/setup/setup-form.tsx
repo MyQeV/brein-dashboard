@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
+import { errorDetail } from "@/lib/client-fetch";
 
 const POLICY =
   "At least 10 characters with an upper case letter, a lower case letter, a digit and a symbol. Not your username.";
@@ -38,11 +39,9 @@ export function SetupForm() {
         }),
       });
       if (!response.ok) {
-        const detail = await response
-          .json()
-          .then((data: { detail?: string }) => data.detail)
-          .catch(() => undefined);
-        setError(detail ?? "Could not create the administrator account.");
+        setError(
+          (await errorDetail(response)) ?? "Could not create the administrator account.",
+        );
         setPending(false);
         return;
       }

@@ -4,23 +4,21 @@ import re
 import secrets
 from typing import Annotated
 
+import anyio.to_thread
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from brein.store import users as store_users
-from brein.integrations import emby as emby_integration
-from brein.integrations.api import jellyfin as jellyfin_integration
 from brein.web import auth as web_auth
 from brein.web.dependencies import require_instance_config
+from brein.web.routers.emby import MEDIA_SERVER_TYPES, _media_integration
 from brein.web.schemas import User
 
 router = APIRouter(tags=["users-import"])
 
 AdminUser = Annotated[User, Depends(web_auth.get_current_admin_user)]
 
-
-def _media_integration(service_type: str):
-    return jellyfin_integration if service_type == "jellyfin" else emby_integration
+NOT_A_MEDIA_SERVER = "Instance is not an Emby or Jellyfin server"
 
 
 def _sanitize_username(name: str) -> str:
@@ -82,7 +80,6 @@ class ImportResult(BaseModel):
     created: list[ImportedUser]
     skipped: list[SkippedUser]
     errors: list[dict]
-    dry_run: bool
 
 
 @router.get("/api/users/emby-users", response_model=list[EmbyUserListItem])
@@ -91,11 +88,9 @@ async def list_emby_users(
     current_user: AdminUser,
 ) -> list[EmbyUserListItem]:
     """Return all Emby/Jellyfin users for an instance with import-eligibility flags."""
-    service_type, base_url, api_key = await require_instance_config(instance_id)
-    if service_type not in ("emby", "jellyfin"):
-        raise HTTPException(
-            status_code=400, detail="Instance is not an Emby or Jellyfin server"
-        )
+    service_type, base_url, api_key = await require_instance_config(
+        instance_id, MEDIA_SERVER_TYPES, detail=NOT_A_MEDIA_SERVER
+    )
     ok, raw_users = await _media_integration(service_type).get_users(base_url, api_key)
     if not ok or raw_users is None:
         raise HTTPException(
@@ -133,11 +128,9 @@ async def import_emby_users(
     Users log in using their media server password (passthrough auth).
     Already-existing usernames and disabled accounts are skipped.
     """
-    service_type, base_url, api_key = await require_instance_config(body.instance_id)
-    if service_type not in ("emby", "jellyfin"):
-        raise HTTPException(
-            status_code=400, detail="Instance is not an Emby or Jellyfin server"
-        )
+    service_type, base_url, api_key = await require_instance_config(
+        body.instance_id, MEDIA_SERVER_TYPES, detail=NOT_A_MEDIA_SERVER
+    )
     ok, raw_users = await _media_integration(service_type).get_users(base_url, api_key)
     if not ok or raw_users is None:
         raise HTTPException(
@@ -145,6 +138,12 @@ async def import_emby_users(
         )
 
     reserved = await store_users.get_usernames_set()
+    # One hash for every account: nobody logs in with it (their media server
+    # password is what is checked), and argon2 is slow by design — once per
+    # user it held the event loop for the whole import.
+    placeholder_hash = await anyio.to_thread.run_sync(
+        web_auth.get_password_hash, secrets.token_hex(32)
+    )
 
     created: list[ImportedUser] = []
     skipped: list[SkippedUser] = []
@@ -179,7 +178,6 @@ async def import_emby_users(
             continue
 
         try:
-            placeholder_hash = web_auth.get_password_hash(secrets.token_hex(32))
             if service_type == "jellyfin":
                 await store_users.create_user(
                     username=username,
@@ -205,9 +203,4 @@ async def import_emby_users(
                 {"emby_name": emby_name, "username": username, "error": str(exc)}
             )
 
-    return ImportResult(
-        created=created,
-        skipped=skipped,
-        errors=errors,
-        dry_run=False,
-    )
+    return ImportResult(created=created, skipped=skipped, errors=errors)

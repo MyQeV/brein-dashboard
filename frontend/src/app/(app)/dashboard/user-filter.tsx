@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -18,6 +18,7 @@ export function UserFilter({ users }: { users: { id: string; name: string }[] })
   const params = useSearchParams();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const menuId = useId();
 
   // Dismissed the way the theme picker is: without this the list stayed open
   // over the page once you clicked anything else, and Escape did nothing.
@@ -83,7 +84,9 @@ export function UserFilter({ users }: { users: { id: string; name: string }[] })
       <Button
         size="sm"
         variant="secondary"
+        aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
         onClick={() => setOpen((value) => !value)}
       >
         Users
@@ -91,8 +94,10 @@ export function UserFilter({ users }: { users: { id: string; name: string }[] })
 
       {open && (
         <div
+          id={menuId}
           role="menu"
-          className="absolute top-full right-0 z-100 mt-1 max-h-64 w-56 overflow-y-auto rounded-md border border-border bg-surface p-1"
+          aria-label="Filter by user"
+          className="absolute top-full right-0 z-(--z-dropdown) mt-1 max-h-64 w-56 overflow-y-auto rounded-md border border-border bg-surface p-1"
         >
           {users.map((user) => (
             <div key={user.id}>

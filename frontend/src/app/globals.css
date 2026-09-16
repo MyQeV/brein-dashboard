@@ -27,6 +27,7 @@
   --color-accent-ink: var(--accent-ink);
   --color-success: var(--success);
   --color-error: var(--error);
+  --color-error-ink: var(--error-ink);
   --color-warning: var(--warning);
 
   --font-sans: var(--font-sans-stack);
@@ -66,6 +67,7 @@
   --accent-ink: #08080b;
   --success: #7fcf8a;
   --error: #e0806e;
+  --error-ink: #08080b;
   --warning: #f0a63a;
   --chart-1: #c57d00;
   --chart-2: #3b5bdb;
@@ -96,6 +98,7 @@
   --accent-ink: #2e3440;
   --success: #a3be8c;
   --error: #d08770;
+  --error-ink: #2e3440;
   --warning: #ebcb8b;
   --chart-1: #199fbc;
   --chart-2: #e8590c;
@@ -126,6 +129,7 @@
   --accent-ink: #100c08;
   --success: #9dbb8a;
   --error: #d9836b;
+  --error-ink: #100c08;
   --warning: #e39a57;
   --chart-1: #c37d38;
   --chart-2: #3b5bdb;
@@ -156,6 +160,7 @@
   --accent-ink: #0d1117;
   --success: #3fb950;
   --error: #f85149;
+  --error-ink: #0d1117;
   --warning: #d29922;
   --chart-1: #4391e9;
   --chart-2: #e8590c;
@@ -186,6 +191,7 @@
   --accent-ink: #ffffff;
   --success: #2e6b3f;
   --error: #b4541b;
+  --error-ink: #ffffff;
   --warning: #b06f12;
   --chart-1: #b06f12;
   --chart-2: #3b5bdb;

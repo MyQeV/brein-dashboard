@@ -4,9 +4,11 @@ import { useState } from "react";
 import { RankedBars } from "@/components/charts/ranked-bars";
 import { StatTile } from "@/components/charts/stat-tile";
 import { Card } from "@/components/ui/card";
+import { ShowAllToggle } from "@/components/ui/show-all-toggle";
 import { Spinner } from "@/components/ui/spinner";
 import { formatCount, formatDateTime } from "@/lib/format";
 import { type ApiRow, rowNumber, rowText } from "@/lib/rows";
+import { useTimeZone } from "@/lib/timezone-context";
 import { useApi } from "@/lib/use-api";
 
 type Concurrency = {
@@ -18,6 +20,7 @@ type Concurrency = {
 type IdleUser = {
   instance_id: number;
   instance_label: string;
+  user_id: string;
   display_name: string;
   last_played: string;
   last_activity_date: string;
@@ -66,12 +69,13 @@ export function ConcurrencyTile({ query }: { query: string }) {
  * rewatches and short content that the watch-time lists bury.
  */
 export function MostPlayedCard({ rows }: { rows: ApiRow[] }) {
+  // Keyed on the label: the API's `_sum_by_label` has already collapsed the
+  // rows by title, and what it returns carries no instance or item id.
   const items = rows
-    .map((row, index) => ({
-      id: `${rowText(row, ["instance_id"], "")}:${rowText(row, ["item_id"], String(index))}`,
-      label: rowText(row),
-      value: rowNumber(row, ["plays"]),
-    }))
+    .map((row) => {
+      const label = rowText(row);
+      return { id: label, label, value: rowNumber(row, ["plays"]) };
+    })
     .filter((row) => row.label);
 
   return (
@@ -94,10 +98,10 @@ export function IdleUsersCard({ instanceIds }: { instanceIds?: string }) {
     `/api/dashboard/idle-users?days=${IDLE_DAYS}${scope}`,
   );
   const [showAll, setShowAll] = useState(false);
+  const timeZone = useTimeZone();
 
   const users = state.status === "ok" ? state.data.users : [];
   const shown = showAll ? users : users.slice(0, IDLE_PREVIEW);
-  const hidden = users.length - shown.length;
 
   return (
     <Card
@@ -132,33 +136,24 @@ export function IdleUsersCard({ instanceIds }: { instanceIds?: string }) {
             </thead>
             <tbody className="divide-y divide-border">
               {shown.map((user) => (
-                <tr key={`${user.instance_id}-${user.display_name}`}>
+                <tr key={`${user.instance_id}-${user.user_id}`}>
                   <td className="py-1.5">{user.display_name}</td>
                   <td className="py-1.5 text-muted">{user.instance_label || "—"}</td>
                   <td className="py-1.5 whitespace-nowrap text-muted tabular-nums">
-                    {user.last_played ? formatDateTime(user.last_played) : "Never"}
+                    {user.last_played
+                      ? formatDateTime(user.last_played, timeZone)
+                      : "Never"}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {hidden > 0 ? (
-            <button
-              type="button"
-              onClick={() => setShowAll(true)}
-              className="self-start text-xs text-muted hover:text-text"
-            >
-              +{hidden} more · <span className="text-accent">show all</span>
-            </button>
-          ) : showAll && users.length > IDLE_PREVIEW ? (
-            <button
-              type="button"
-              onClick={() => setShowAll(false)}
-              className="self-start text-xs text-accent hover:text-text"
-            >
-              show fewer
-            </button>
-          ) : null}
+          <ShowAllToggle
+            total={users.length}
+            limit={IDLE_PREVIEW}
+            expanded={showAll}
+            onToggle={setShowAll}
+          />
         </div>
       )}
     </Card>

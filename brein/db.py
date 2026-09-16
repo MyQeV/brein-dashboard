@@ -143,6 +143,86 @@ TIME_RANGE_INDEXES: tuple[tuple[str, str], ...] = (
     ("jellyfin_activity_log_entries", "date"),
 )
 
+
+def _query_indexes() -> tuple[tuple[str, str, str], ...]:
+    """Indexes the two loops in `_ensure_instance_cascades` cannot express.
+
+    (index name, table, definition) — the definition is everything after
+    ON "table". The session tables get:
+      (start_time)                       the unfiltered dashboard's raw-text
+                                         window has no instance_id to lead with
+      (instance_id, user_id, item_id)    the session rebuild's per-group DELETE
+      (instance_id, user_id, start_time) the per-user detail queries
+    The activity logs get a partial index on just the playback events the
+    rebuild joins per (instance, user, item) — the type list is the store's
+    own, so the two cannot drift apart — the run history one on started_at
+    for the prune, and the SABnzbd snapshots one for the newest-row lookup.
+    """
+    from brein.store.emby_playback_sessions import _SQL_TYPES_LITERAL as emby_types
+    from brein.store.jellyfin_playback_sessions import (
+        _SQL_TYPES_LITERAL as jellyfin_types,
+    )
+
+    return (
+        (
+            "ix_emby_playback_sessions_start_time",
+            "emby_playback_sessions",
+            "(start_time)",
+        ),
+        (
+            "ix_jellyfin_playback_sessions_start_time",
+            "jellyfin_playback_sessions",
+            "(start_time)",
+        ),
+        (
+            "ix_plex_playback_sessions_start_time",
+            "plex_playback_sessions",
+            "(start_time)",
+        ),
+        (
+            "ix_emby_playback_sessions_group",
+            "emby_playback_sessions",
+            "(instance_id, user_id, item_id)",
+        ),
+        (
+            "ix_jellyfin_playback_sessions_group",
+            "jellyfin_playback_sessions",
+            "(instance_id, user_id, item_id)",
+        ),
+        (
+            "ix_emby_playback_sessions_user_start",
+            "emby_playback_sessions",
+            "(instance_id, user_id, start_time)",
+        ),
+        (
+            "ix_jellyfin_playback_sessions_user_start",
+            "jellyfin_playback_sessions",
+            "(instance_id, user_id, start_time)",
+        ),
+        (
+            "ix_plex_playback_sessions_account_start",
+            "plex_playback_sessions",
+            "(instance_id, account_id, start_time)",
+        ),
+        (
+            "ix_emby_activity_log_entries_playback_group",
+            "emby_activity_log_entries",
+            f"(instance_id, user_id, item_id, date) WHERE type IN {emby_types}",
+        ),
+        (
+            "ix_jellyfin_activity_log_entries_playback_group",
+            "jellyfin_activity_log_entries",
+            f"(instance_id, user_id, item_id, date) WHERE type IN {jellyfin_types}",
+        ),
+        ("ix_scheduled_task_runs_started_at", "scheduled_task_runs", "(started_at)"),
+        (
+            "ix_sabnzbd_server_stats_snapshots_instance_collected",
+            "sabnzbd_server_stats_snapshots",
+            "(instance_id, collected_at)",
+        ),
+    )
+
+
 _ORPHAN_BATCH = 10_000
 
 _FK_PROBE = """
@@ -380,6 +460,18 @@ async def _ensure_instance_cascades(engine) -> None:
             log.exception(
                 "Could not create (instance_id, %s) index on %s", column, table
             )
+
+    for name, table, definition in _query_indexes():
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(_text("SET LOCAL lock_timeout = '5s'"))
+                await conn.execute(
+                    _text(
+                        f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" {definition}'
+                    )
+                )
+        except Exception:
+            log.exception("Could not create index %s on %s", name, table)
 
     failed: list[str] = []
     for table in INSTANCE_SCOPED_TABLES:

@@ -4,7 +4,8 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EXTRA_PINGABLE, EXTRA_RESTARTABLE } from "@/extras";
-import { type ActionResult, pingInstance, restartInstance } from "./actions";
+import type { ActionResult } from "@/lib/actions";
+import { pingInstance, restartInstance } from "./actions";
 
 const RESTARTABLE = new Set([
   "emby",

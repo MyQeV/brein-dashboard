@@ -10,8 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from brein import config as brein_config
 from brein.db import get_session_factory
 from brein.store.metrics_helpers import (
+    _LIVE_TV_SQL,
     _UTC_TEXT_WINDOW,
     _UTC_TEXT_WINDOW_BARE,
+    _snapshot_since_params,
     _user_instance_filter as _shared_user_instance_filter,
     _utc_window_params,
 )
@@ -70,27 +72,43 @@ def _date_range_where(
     )
 
 
-async def rebuild_snapshots(instance_id: int | None = None) -> None:
-    """Delete and re-populate the three snapshot tables from sessions + items + users.
+async def rebuild_snapshots(
+    instance_id: int | None = None, since_date: str | None = None
+) -> None:
+    """Re-populate the three snapshot tables from sessions + items + users.
 
-    Serialized via _rebuild_lock so concurrent callers don't race on
+    With ``since_date`` (a local YYYY-MM-DD stat_date) only that day and later
+    are deleted and re-aggregated; without it every row is. The three tables
+    share one bound and one transaction, so they never disagree with each
+    other. Serialized via _rebuild_lock so concurrent callers don't race on
     DELETE/INSERT and trip a unique-violation.
     """
     async with _rebuild_lock, get_session_factory()() as session:
+        tz = brein_config.TIMEZONE
+        ld = _local_date_expr("s.start_time", "tz")
+
         inst_filter = ""
         inst_params: dict[str, Any] = {}
+        del_where: list[str] = []
         if instance_id is not None:
             inst_filter = " AND s.instance_id = :instance_id"
             inst_params = {"instance_id": instance_id}
+            del_where.append("instance_id = :instance_id")
 
-        inst_del_filter = ""
-        inst_del_params: dict[str, Any] = {}
-        if instance_id is not None:
-            inst_del_filter = " WHERE instance_id = :instance_id"
-            inst_del_params = {"instance_id": instance_id}
+        # The raw-text prefilter lets the start_time index prune the scan; the
+        # local-date predicate decides, and matches the DELETE's bound exactly.
+        since_filter = ""
+        since_params: dict[str, Any] = {}
+        if since_date:
+            since_filter = f" AND s.start_time >= :since_lo AND {ld} >= :since_date"
+            since_params = _snapshot_since_params(since_date)
+            del_where.append("stat_date >= :since_date")
 
-        tz = brein_config.TIMEZONE
-        ld = _local_date_expr("s.start_time", "tz")
+        inst_del_filter = (" WHERE " + " AND ".join(del_where)) if del_where else ""
+        inst_del_params: dict[str, Any] = {**inst_params}
+        if since_date:
+            inst_del_params["since_date"] = since_date
+        sel_params: dict[str, Any] = {"tz": tz, **inst_params, **since_params}
 
         # --- jellyfin_metrics_snapshot (daily totals) ---
         await session.execute(
@@ -110,15 +128,15 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
                     COALESCE(SUM(s.duration_seconds), 0) AS total_watch_time_seconds,
                     SUM(CASE WHEN i.type = 'Movie' THEN 1 ELSE 0 END) AS total_movies,
                     SUM(CASE WHEN i.type = 'Episode' THEN 1 ELSE 0 END) AS total_episodes,
-                    SUM(CASE WHEN i.type IN ('LiveTvChannel','Program') THEN 1 ELSE 0 END) AS total_live_tv
+                    SUM(CASE WHEN i.type IN {_LIVE_TV_SQL} THEN 1 ELSE 0 END) AS total_live_tv
                 FROM jellyfin_playback_sessions s
                 LEFT JOIN jellyfin_items i
                     ON i.instance_id = s.instance_id AND i.item_id = s.item_id
-                WHERE 1=1 {inst_filter}
+                WHERE 1=1 {inst_filter}{since_filter}
                 GROUP BY {ld}, s.instance_id
                 """
             ),
-            {"tz": tz, **inst_params},
+            sel_params,
         )
 
         # --- jellyfin_metrics_snapshot_user (daily per-user) ---
@@ -142,11 +160,12 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
                 LEFT JOIN jellyfin_users u
                     ON u.instance_id = s.instance_id
                    AND u.user_id = s.user_id
-                WHERE 1=1 {inst_filter}
+                   AND u.is_deleted = 0
+                WHERE 1=1 {inst_filter}{since_filter}
                 GROUP BY {ld}, s.instance_id, s.user_id, u.name
                 """
             ),
-            {"tz": tz, **inst_params},
+            sel_params,
         )
 
         # --- jellyfin_metrics_snapshot_item (daily per-item, denormalized) ---
@@ -183,18 +202,19 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
                 LEFT JOIN jellyfin_items series_item
                     ON series_item.instance_id = i.instance_id
                    AND series_item.item_id = i.series_id
-                WHERE 1=1 {inst_filter}
+                WHERE 1=1 {inst_filter}{since_filter}
                 GROUP BY {ld}, s.instance_id, s.item_id,
                          i.name, i.type, i.series_id, series_item.name
                 """
             ),
-            {"tz": tz, **inst_params},
+            sel_params,
         )
 
         await session.commit()
         log.info(
-            "Jellyfin dashboard snapshots rebuilt%s",
+            "Jellyfin dashboard snapshots rebuilt%s%s",
             f" for instance_id={instance_id}" if instance_id is not None else "",
+            f" since {since_date}" if since_date else "",
         )
 
 
@@ -203,69 +223,57 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _get_total_plays(
+async def _get_snapshot_totals(
     session: AsyncSession,
     start_date: str,
     end_date: str,
     instance_id: int | list[int] | None = None,
     user_ids: list[str] | None = None,
-) -> int:
+) -> dict[str, int]:
+    """The scalar tiles that come straight off a snapshot table, in one query.
+
+    Without a user filter that is plays, watch time, episodes and live TV
+    from jellyfin_metrics_snapshot; with one, plays and watch time from
+    jellyfin_metrics_snapshot_user (episodes and live TV then need the
+    sessions — see the per-tile helpers). One round trip instead of four on
+    a session that cannot run them concurrently anyway.
+    """
     dr, dr_p = _date_range_where(start_date, end_date)
     inst_w, inst_p = _instance_filter(instance_id)
     if user_ids:
         usr_w, usr_p = _user_instance_filter(
             user_ids, "instance_id", "CAST(user_id AS TEXT)"
         )
-        params = {**dr_p, **inst_p, **usr_p}
-        result = await session.execute(
+        row = (
+            await session.execute(
+                text(
+                    f"SELECT COALESCE(SUM(plays), 0), COALESCE(SUM(watch_time_seconds), 0)"
+                    f" FROM jellyfin_metrics_snapshot_user WHERE 1=1{dr}{inst_w}{usr_w}"
+                ),
+                {**dr_p, **inst_p, **usr_p},
+            )
+        ).fetchone()
+        return {
+            "total_plays": int(row[0]) if row else 0,
+            "total_watch_time_seconds": int(row[1]) if row else 0,
+        }
+    row = (
+        await session.execute(
             text(
-                f"SELECT COALESCE(SUM(plays), 0) FROM jellyfin_metrics_snapshot_user WHERE 1=1{dr}{inst_w}{usr_w}"
-            ),
-            params,
-        )
-    else:
-        params = {**dr_p, **inst_p}
-        result = await session.execute(
-            text(
-                f"SELECT COALESCE(SUM(total_plays), 0) FROM jellyfin_metrics_snapshot WHERE 1=1{dr}{inst_w}"
-            ),
-            params,
-        )
-    row = result.fetchone()
-    return int(row[0]) if row else 0
-
-
-async def _get_total_watch_time_seconds(
-    session: AsyncSession,
-    start_date: str,
-    end_date: str,
-    instance_id: int | list[int] | None = None,
-    user_ids: list[str] | None = None,
-) -> int:
-    dr, dr_p = _date_range_where(start_date, end_date)
-    inst_w, inst_p = _instance_filter(instance_id)
-    if user_ids:
-        usr_w, usr_p = _user_instance_filter(
-            user_ids, "instance_id", "CAST(user_id AS TEXT)"
-        )
-        params = {**dr_p, **inst_p, **usr_p}
-        result = await session.execute(
-            text(
-                f"SELECT COALESCE(SUM(watch_time_seconds), 0) FROM jellyfin_metrics_snapshot_user WHERE 1=1{dr}{inst_w}{usr_w}"
-            ),
-            params,
-        )
-    else:
-        params = {**dr_p, **inst_p}
-        result = await session.execute(
-            text(
-                f"SELECT COALESCE(SUM(total_watch_time_seconds), 0)"
+                f"SELECT COALESCE(SUM(total_plays), 0),"
+                f" COALESCE(SUM(total_watch_time_seconds), 0),"
+                f" COALESCE(SUM(total_episodes), 0), COALESCE(SUM(total_live_tv), 0)"
                 f" FROM jellyfin_metrics_snapshot WHERE 1=1{dr}{inst_w}"
             ),
-            params,
+            {**dr_p, **inst_p},
         )
-    row = result.fetchone()
-    return int(row[0]) if row else 0
+    ).fetchone()
+    return {
+        "total_plays": int(row[0]) if row else 0,
+        "total_watch_time_seconds": int(row[1]) if row else 0,
+        "total_watched_episodes": int(row[2]) if row else 0,
+        "total_watched_live_tv": int(row[3]) if row else 0,
+    }
 
 
 async def _get_total_watched_movies(
@@ -448,7 +456,7 @@ async def _get_total_watched_live_tv(
                 LEFT JOIN jellyfin_items i
                     ON i.instance_id = s.instance_id
                    AND i.item_id = CAST(s.item_id AS TEXT)
-                WHERE i.type IN ('LiveTvChannel', 'Program')
+                WHERE i.type IN {_LIVE_TV_SQL}
                   AND (LEFT(s.start_time, 19)::timestamp AT TIME ZONE 'UTC' AT TIME ZONE :tz)::date::text >= :start_date
                   AND (LEFT(s.start_time, 19)::timestamp AT TIME ZONE 'UTC' AT TIME ZONE :tz)::date::text <= :end_date
                   {_UTC_TEXT_WINDOW}
@@ -804,7 +812,7 @@ async def _get_watch_time_by_media_type(
               CASE
                 WHEN i.type = 'Movie' THEN 'Movie'
                 WHEN i.type = 'Episode' THEN 'Episode'
-                WHEN i.type IN ('LiveTvChannel', 'TvChannel', 'Program') THEN 'LiveTV'
+                WHEN i.type IN {_LIVE_TV_SQL} THEN 'LiveTV'
                 WHEN i.type = 'Audio' THEN 'Audio'
                 ELSE 'Other'
               END AS media_type,
@@ -942,11 +950,11 @@ async def _get_watch_time_per_movie(
     ]
 
 
-_JELLYFIN_MEDIA_TYPE_CASE = """
+_JELLYFIN_MEDIA_TYPE_CASE = f"""
                 CASE
                   WHEN i.type = 'Movie' THEN 'Movie'
                   WHEN i.type = 'Episode' THEN 'Episode'
-                  WHEN i.type IN ('LiveTvChannel', 'TvChannel', 'Program') THEN 'LiveTV'
+                  WHEN i.type IN {_LIVE_TV_SQL} THEN 'LiveTV'
                   WHEN i.type = 'Audio' THEN 'Audio'
                   ELSE 'Other'
                 END
@@ -1370,6 +1378,7 @@ async def _get_watch_time_per_user_per_day(
             LEFT JOIN jellyfin_users u
                 ON u.instance_id = s.instance_id
                AND u.user_id = s.user_id
+               AND u.is_deleted = 0
             WHERE 1=1
               AND (LEFT(s.start_time, 19)::timestamp AT TIME ZONE 'UTC' AT TIME ZONE :tz)::date::text >= :start_date
               AND (LEFT(s.start_time, 19)::timestamp AT TIME ZONE 'UTC' AT TIME ZONE :tz)::date::text <= :end_date
@@ -1413,15 +1422,24 @@ async def get_all_metrics(
 ) -> dict[str, Any]:
     """Return all dashboard metrics for the date range from Jellyfin snapshot tables."""
     async with get_session_factory()() as session:
-        total_plays = await _get_total_plays(
+        totals = await _get_snapshot_totals(
             session, start_date, end_date, instance_id, user_ids
         )
-        total_watch_time = await _get_total_watch_time_seconds(
-            session, start_date, end_date, instance_id, user_ids
-        )
+        total_plays = totals["total_plays"]
+        total_watch_time = totals["total_watch_time_seconds"]
         avg_session_seconds = (
             round(total_watch_time / total_plays) if total_plays > 0 else 0
         )
+        if user_ids:
+            total_episodes = await _get_total_watched_episodes(
+                session, start_date, end_date, instance_id, user_ids
+            )
+            total_live_tv = await _get_total_watched_live_tv(
+                session, start_date, end_date, instance_id, user_ids
+            )
+        else:
+            total_episodes = totals["total_watched_episodes"]
+            total_live_tv = totals["total_watched_live_tv"]
         return {
             "start_date": start_date,
             "end_date": end_date,
@@ -1443,15 +1461,11 @@ async def get_all_metrics(
             "total_watched_movies": await _get_total_watched_movies(
                 session, start_date, end_date, instance_id, user_ids
             ),
-            "total_watched_episodes": await _get_total_watched_episodes(
-                session, start_date, end_date, instance_id, user_ids
-            ),
+            "total_watched_episodes": total_episodes,
             "total_watched_series": await _get_total_watched_series(
                 session, start_date, end_date, instance_id, user_ids
             ),
-            "total_watched_live_tv": await _get_total_watched_live_tv(
-                session, start_date, end_date, instance_id, user_ids
-            ),
+            "total_watched_live_tv": total_live_tv,
             "watch_time_by_media_type": await _get_watch_time_by_media_type(
                 session, start_date, end_date, instance_id, user_ids
             ),

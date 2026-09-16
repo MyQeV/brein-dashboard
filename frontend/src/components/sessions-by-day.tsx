@@ -3,7 +3,7 @@
 import { Fragment, type ReactNode, useMemo, useState } from "react";
 import { BELOW_LG } from "@/lib/breakpoints";
 import { cn } from "@/lib/cn";
-import { formatCount, formatDuration } from "@/lib/format";
+import { dateTimeFormatter, formatCount, formatDuration } from "@/lib/format";
 import { useMediaQuery } from "@/lib/use-media-query";
 
 /**
@@ -45,18 +45,18 @@ export function sessionDay(row: SessionRow, timeZone: string): string {
   if (!row.played_at) return "—";
   const parsed = new Date(row.played_at);
   if (Number.isNaN(parsed.getTime())) return "—";
-  return parsed.toLocaleDateString("en-CA", { timeZone });
+  return dateTimeFormatter("en-CA", { timeZone }).format(parsed);
 }
 
 export function sessionTime(row: SessionRow, timeZone: string): string {
   if (!row.played_at) return "—";
   const parsed = new Date(row.played_at);
   if (Number.isNaN(parsed.getTime())) return "—";
-  return parsed.toLocaleTimeString("en-GB", {
+  return dateTimeFormatter("en-GB", {
     timeZone,
     hour: "2-digit",
     minute: "2-digit",
-  });
+  }).format(parsed);
 }
 
 /**
@@ -69,7 +69,7 @@ export function sessionTime(row: SessionRow, timeZone: string): string {
 export function weekdayName(day: string): string {
   const parsed = new Date(`${day}T12:00:00Z`);
   if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" });
+  return dateTimeFormatter("en-GB", { weekday: "long", timeZone: "UTC" }).format(parsed);
 }
 
 /**

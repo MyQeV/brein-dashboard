@@ -15,6 +15,7 @@ from brein.store import jellyfin_activity_log as store_activity_log
 from brein.store import jellyfin_dashboard_metrics as store_dashboard_metrics
 from brein.store import jellyfin_playback_sessions as store_playback_sessions
 from brein.store import instances as store_instances
+from brein.store.metrics_helpers import _snapshot_rebuild_since
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +87,25 @@ async def _sync_one_instance(instance_id: int, instance_id_for_config: Any) -> N
         )
 
 
+_last_snapshot_rebuild = 0.0
+# What the next snapshot rebuild has to cover: the earliest local stat_date a
+# session rebuild since the last one can have changed, or everything after a
+# full session rebuild (and on the first pass after boot, when nothing is
+# known). Every instance's sync feeds the same pair; the rebuild is global.
+_snapshot_since: str | None = None
+_snapshot_full_pending = True
+
+
+def _note_snapshot_change(changed_at_utc: str | None) -> None:
+    """Widen what the next snapshot rebuild covers; None means all of it."""
+    global _snapshot_since, _snapshot_full_pending
+    since = _snapshot_rebuild_since(changed_at_utc) if changed_at_utc else None
+    if since is None:
+        _snapshot_full_pending = True
+    elif _snapshot_since is None or since < _snapshot_since:
+        _snapshot_since = since
+
+
 async def _rebuild_playback_sessions(instance_id: int) -> None:
     max_entry_id = await store_activity_log.get_max_entry_id(instance_id)
     if max_entry_id is None:
@@ -97,6 +117,7 @@ async def _rebuild_playback_sessions(instance_id: int) -> None:
         n = await store_playback_sessions.rebuild_sessions(
             instance_id=instance_id, since_date=None
         )
+        _note_snapshot_change(None)
         if n:
             log.info(
                 "Jellyfin playback sessions: instance_id=%s rebuilt %d sessions (full)",
@@ -114,6 +135,7 @@ async def _rebuild_playback_sessions(instance_id: int) -> None:
             n = await store_playback_sessions.rebuild_sessions(
                 instance_id=instance_id, since_date=since_date
             )
+            _note_snapshot_change(since_date)
             if n:
                 log.info(
                     "Jellyfin playback sessions: instance_id=%s rebuilt %d sessions (since %s)",
@@ -126,19 +148,20 @@ async def _rebuild_playback_sessions(instance_id: int) -> None:
         )
 
 
-_last_snapshot_rebuild = 0.0
-
-
 async def _rebuild_dashboard_snapshots() -> None:
     """Throttled global rebuild — caller may invoke per instance; gated by interval.
 
     Unthrottled, this ran a full DELETE + INSERT…SELECT over every snapshot
     table once per instance every 60 seconds, each pass rescanning all playback
-    sessions. Emby's equivalent has always been gated this way.
+    sessions. Emby's equivalent has always been gated this way. Now also
+    incremental from the earliest day a session rebuild touched since the
+    last pass, full when that is unknown, and skipped when nothing changed.
     """
-    global _last_snapshot_rebuild
+    global _last_snapshot_rebuild, _snapshot_since, _snapshot_full_pending
     now = time.monotonic()
     if now - _last_snapshot_rebuild < brein_config.SNAPSHOT_REBUILD_INTERVAL_SECONDS:
+        return
+    if not _snapshot_full_pending and _snapshot_since is None:
         return
     # Stamped before the work, not after. Advancing only on success meant a
     # rebuild that keeps failing reran on every activity sync — the heaviest
@@ -146,8 +169,11 @@ async def _rebuild_dashboard_snapshots() -> None:
     # instance finishing during it queue another behind the lock. The Plex
     # path was fixed for this; these two were not.
     _last_snapshot_rebuild = now
+    since_date = None if _snapshot_full_pending else _snapshot_since
+    _snapshot_full_pending = False
+    _snapshot_since = None
     try:
-        await store_dashboard_metrics.rebuild_snapshots()
+        await store_dashboard_metrics.rebuild_snapshots(since_date=since_date)
         # The merged cache is the one the dashboard reads. This used to
         # clear only the per-backend jellyfin cache, which the removed
         # /api/dashboard/*-metrics routes were the sole users of — so a
@@ -155,6 +181,8 @@ async def _rebuild_dashboard_snapshots() -> None:
         # serving the stale merged payload until its TTL ran out.
         await brein_cache.clear_media_metrics_cache()
     except Exception as e:
+        # The range this pass owed is lost with it; cover everything next time.
+        _snapshot_full_pending = True
         log.warning("Jellyfin dashboard snapshot rebuild failed: %s", e)
 
 

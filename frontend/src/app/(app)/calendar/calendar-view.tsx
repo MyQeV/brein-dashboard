@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { clientFetch } from "@/lib/client-fetch";
 import { cn } from "@/lib/cn";
+import { fetchPreferences, setPreference } from "@/lib/preferences";
 import type { CalendarEvent } from "@/lib/types";
 import { externalHref } from "@/lib/url";
 
@@ -39,8 +40,11 @@ function monthBounds(month: Date): { start: string; end: string } {
   };
 }
 
+// Fixed locale, like every other date on the site: the month is rendered
+// client-side only, but a browser set to nl-NL would otherwise show
+// "september 2026" under English weekday heads.
 function monthLabel(month: Date): string {
-  return month.toLocaleDateString(undefined, {
+  return month.toLocaleDateString("en-GB", {
     month: "long",
     year: "numeric",
     timeZone: "UTC",
@@ -69,7 +73,7 @@ const WEEKDAY_HEADS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /** "Wed 2 Sep" — the agenda's day heading, read in UTC like the grid. */
 function dayHeading(day: string): string {
-  return new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString("en-GB", {
     weekday: "short",
     day: "numeric",
     month: "short",
@@ -143,7 +147,7 @@ export function CalendarView() {
   // is stale by definition and is dropped.
   const touched = useRef(false);
   useEffect(() => {
-    clientFetch<Record<string, unknown>>("/api/user/preferences")
+    fetchPreferences()
       .then((prefs) => {
         if (touched.current) return;
         const saved = prefs[PREF_KEY];
@@ -177,11 +181,7 @@ export function CalendarView() {
       ? sources.filter((value) => value !== source)
       : [...sources, source];
     setSources(next);
-    clientFetch(`/api/user/preferences/${PREF_KEY}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: next }),
-    }).catch(() => {
+    setPreference(PREF_KEY, next).catch(() => {
       // Persisting is best-effort; the toggle still applies for this visit.
     });
   }

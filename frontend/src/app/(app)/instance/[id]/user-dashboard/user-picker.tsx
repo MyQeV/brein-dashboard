@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CONTROL_HEIGHT } from "@/components/ui/control";
+import { Select } from "@/components/ui/select";
 
 export function UserPicker({
   basePath,
@@ -41,9 +42,11 @@ export function UserPicker({
           apply({ user_id: userId, start: from, end: to });
         }}
       >
-        <label className="flex flex-col gap-1 text-sm">
+        <label htmlFor="user-dashboard-user" className="flex flex-col gap-1 text-sm">
           User
-          <select
+          <Select
+            id="user-dashboard-user"
+            size="sm"
             value={userId}
             onChange={(event) => {
               const next = event.target.value;
@@ -52,7 +55,6 @@ export function UserPicker({
               // page, and making them press Apply as well is friction.
               apply({ user_id: next, start: from, end: to });
             }}
-            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           >
             <option value="">Choose a user…</option>
             {users.map((user) => (
@@ -60,7 +62,7 @@ export function UserPicker({
                 {user.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
         <label className="flex flex-col gap-1 text-sm">

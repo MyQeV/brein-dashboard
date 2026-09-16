@@ -1,5 +1,10 @@
 import { cn } from "@/lib/cn";
+import { formatCount } from "@/lib/format";
 
+/**
+ * `id` is the React key when set; labels can repeat ("Unknown series" for
+ * every series whose parent has not synced), and a repeated key drops bars.
+ */
 export type BarDatum = { label: string; value: number; sublabel?: string; id?: string };
 
 /**
@@ -27,7 +32,7 @@ const MAX_BARS_WITH_VALUES = 8;
 export function BarChart({
   data,
   orientation = "vertical",
-  format = (value: number) => value.toLocaleString(),
+  format = formatCount,
   emptyLabel = "No data for this range.",
   maxBarThickness = 24,
   onBarClick,
@@ -50,7 +55,7 @@ export function BarChart({
       <ul className="flex flex-col gap-2">
         {data.map((datum) => (
           <li
-            key={datum.label}
+            key={datum.id ?? datum.label}
             className="grid grid-cols-[10rem_1fr_auto] items-center gap-3"
           >
             <span className="truncate text-sm" title={datum.label}>
@@ -103,7 +108,7 @@ export function BarChart({
           );
           const bar = (
             <span
-              key={datum.label}
+              key={datum.id ?? datum.label}
               className={cn(
                 "block w-full rounded-t-[4px] bg-accent",
                 onBarClick && "transition-opacity group-hover:opacity-75",
@@ -127,7 +132,7 @@ export function BarChart({
 
           return onBarClick ? (
             <button
-              key={datum.label}
+              key={datum.id ?? datum.label}
               type="button"
               title={`${datum.label}: ${format(datum.value)}`}
               aria-label={`${datum.label}: ${format(datum.value)}`}
@@ -138,7 +143,7 @@ export function BarChart({
             </button>
           ) : (
             <div
-              key={datum.label}
+              key={datum.id ?? datum.label}
               title={`${datum.label}: ${format(datum.value)}`}
               className="relative flex min-w-0 flex-1 flex-col items-center justify-end"
             >
@@ -152,7 +157,7 @@ export function BarChart({
       <div className="flex gap-1 border-t border-border pt-1">
         {data.map((datum, index) => (
           <span
-            key={datum.label}
+            key={datum.id ?? datum.label}
             className="min-w-0 flex-1 text-center text-[11px] text-muted max-sm:overflow-visible max-sm:whitespace-nowrap sm:truncate"
           >
             <span className="sm:hidden">

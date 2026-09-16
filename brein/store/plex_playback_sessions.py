@@ -11,6 +11,18 @@ from brein.integrations.api.plex import rating_key_from_plex_session_dict
 
 _MIN_WATCH_SECONDS = 30
 
+# Earliest start_time finalised since the snapshot rebuild last asked, so it
+# can re-aggregate only the days that can have changed. In-process state,
+# like the rebuild throttle that reads it.
+_snapshot_since_utc: str | None = None
+
+
+def take_snapshot_since() -> str | None:
+    """Hand over (and clear) the oldest start_time finalised since the last call."""
+    global _snapshot_since_utc
+    since, _snapshot_since_utc = _snapshot_since_utc, None
+    return since
+
 
 def _optional_int(v: Any) -> int | None:
     if v is None or v == "":
@@ -78,6 +90,7 @@ def _extract_trackable_session(
 
 async def process_live_poll(instance_id: int, sessions: list[Any]) -> None:
     """Upsert active Plex sessions; finalize rows that disappeared from this poll."""
+    global _snapshot_since_utc
     now = time.time()
     now_iso = datetime.now(timezone.utc).isoformat()
     current_keys: set[str] = set()
@@ -152,6 +165,10 @@ async def process_live_poll(instance_id: int, sessions: list[Any]) -> None:
             start_iso = datetime.fromtimestamp(started, tz=timezone.utc).isoformat()
             vo = int(row["view_offset_ms"] or 0)
             dur = int(row["duration_ms"] or 0)
+            # Known difference from Emby/Jellyfin, kept on purpose: this is the
+            # final playhead (how far into the item the viewer got), not the
+            # wall-clock time between start and stop that the activity-log
+            # backends record. Resuming an item mid-way counts the whole offset.
             watched = vo // 1000
             if dur > 0:
                 watched = min(watched, dur // 1000)
@@ -190,6 +207,8 @@ async def process_live_poll(instance_id: int, sessions: list[Any]) -> None:
                     "watched_seconds": watched,
                 },
             )
+            if _snapshot_since_utc is None or start_iso < _snapshot_since_utc:
+                _snapshot_since_utc = start_iso
             await session.execute(
                 text(
                     "DELETE FROM plex_playback_sessions_active"
@@ -230,6 +249,7 @@ async def get_entries(
     user_id: int | None = None,
     type_filter: str | None = None,
     limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     query = (
         "SELECT instance_id, account_id, rating_key, item_type, title, grandparent_title,"
@@ -253,21 +273,25 @@ async def get_entries(
     if limit is not None and limit > 0:
         query += " LIMIT :limit"
         params["limit"] = limit
+    if offset:
+        query += " OFFSET :offset"
+        params["offset"] = int(offset)
     async with get_session_factory()() as session:
         result = await session.execute(text(query), params)
         rows = [dict(x) for x in result.mappings().fetchall()]
     return [_display_entry_from_row(x) for x in rows]
 
 
-async def count_entries(instance_id: int) -> int:
+async def count_entries(instance_id: int, user_id: int | None = None) -> int:
+    query = (
+        "SELECT COUNT(*) FROM plex_playback_sessions WHERE instance_id = :instance_id"
+    )
+    params: dict[str, Any] = {"instance_id": instance_id}
+    if user_id is not None:
+        query += " AND account_id = :user_id"
+        params["user_id"] = user_id
     async with get_session_factory()() as session:
-        result = await session.execute(
-            text(
-                "SELECT COUNT(*) FROM plex_playback_sessions"
-                " WHERE instance_id = :instance_id"
-            ),
-            {"instance_id": instance_id},
-        )
+        result = await session.execute(text(query), params)
         row = result.fetchone()
         return int(row[0]) if row and row[0] is not None else 0
 

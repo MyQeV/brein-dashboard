@@ -8,10 +8,10 @@ import {
 import { Modal } from "@/components/ui/modal";
 import { Spinner } from "@/components/ui/spinner";
 import { formatDuration } from "@/lib/format";
+import { MODAL_LISTS_EXPANDED, useBooleanPreference } from "@/lib/preferences";
 import { rowNumber } from "@/lib/rows";
 import type { MediaDrillRow } from "@/lib/types";
 import { useApi } from "@/lib/use-api";
-import { MODAL_LISTS_EXPANDED, useBooleanPreference } from "@/lib/use-preference";
 
 export type DrillTarget = { drillType: string; id: string; title: string };
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useState } from "react";
+import { ShowAllToggle } from "@/components/ui/show-all-toggle";
 import { cn } from "@/lib/cn";
 
 export type RankedDatum = {
@@ -59,7 +60,6 @@ export function RankedBars({
   const rows = showAll ? sorted : sorted.slice(0, limit);
   const max = sorted[0]?.value ?? 0;
   const hasLeading = sorted.some((datum) => datum.leading !== undefined);
-  const hidden = sorted.length - rows.length;
 
   if (sorted.length === 0 || max <= 0) {
     return <p className="py-6 text-sm text-muted">{emptyLabel}</p>;
@@ -128,22 +128,13 @@ export function RankedBars({
         })}
       </ul>
 
-      {hidden > 0 ? (
-        <button
-          type="button"
-          onClick={() => setShowAll(true)}
-          className="self-start text-xs text-muted hover:text-text"
-        >
-          +{hidden} more · <span className="text-accent">show all</span>
-        </button>
-      ) : showAll && sorted.length > limit ? (
-        <button
-          type="button"
-          onClick={() => setShowAll(false)}
-          className="self-start text-xs text-accent hover:text-text"
-        >
-          show fewer
-        </button>
+      {sorted.length > limit ? (
+        <ShowAllToggle
+          total={sorted.length}
+          limit={limit}
+          expanded={showAll}
+          onToggle={setShowAll}
+        />
       ) : footer ? (
         <span className="text-xs text-muted">{footer}</span>
       ) : null}

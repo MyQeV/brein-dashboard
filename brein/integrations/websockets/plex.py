@@ -10,6 +10,7 @@ from urllib.parse import quote
 import websockets
 from websockets.exceptions import ConnectionClosed
 
+from brein.integrations.api.base import _is_ssrf_risk_url, normalize_base_url
 from brein.store import plex_ws_events as store_plex_ws_events
 
 log = logging.getLogger(__name__)
@@ -19,17 +20,10 @@ log = logging.getLogger(__name__)
 STABLE_CONNECTION_SECONDS = 60.0
 
 
-def _normalize_base_url(base_url: str) -> str:
-    base = (base_url or "").strip().rstrip("/")
-    if not base.startswith(("http://", "https://")):
-        return ""
-    return base
-
-
 def plex_notification_websocket_url(base_url: str, api_key: str) -> str:
     """Build PMS notifications WebSocket URL (ws/wss + /:/websockets/notifications + token)."""
-    base = _normalize_base_url(base_url)
-    if not base or not api_key:
+    base = normalize_base_url(base_url)
+    if not base.startswith(("http://", "https://")) or not api_key:
         return ""
     if base.startswith("https://"):
         host_part = base[len("https://") :]
@@ -75,6 +69,11 @@ async def run_plex_notification_listener(
         log.warning(
             "Plex WebSocket: invalid base_url or token (instance_id=%s)", instance_id
         )
+        return
+    # websockets.connect does not go through the httpx client, so the SSRF
+    # hook attached there never sees this connection.
+    if await _is_ssrf_risk_url(base_url):
+        log.warning("Plex WebSocket: blocked base_url (instance_id=%s)", instance_id)
         return
     backoff = 1.0
     max_backoff = 60.0

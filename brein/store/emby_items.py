@@ -12,6 +12,21 @@ log = logging.getLogger(__name__)
 
 NAME_MAX_LEN = 512
 
+# Only rows whose metadata actually changed are written: the hourly sync
+# re-sends the whole library, and rewriting every row bumped updated_at on
+# all of them — so it said when the library was last walked, not when the
+# item last changed — and left a full table's worth of dead tuples an hour.
+_UPSERT_IF_CHANGED = (
+    " WHERE (emby_items.type, emby_items.name, emby_items.server_id,"
+    "  emby_items.series_id, emby_items.season_id, emby_items.parent_id,"
+    "  emby_items.run_time_ticks, emby_items.index_number,"
+    "  emby_items.parent_index_number)"
+    " IS DISTINCT FROM"
+    " (EXCLUDED.type, EXCLUDED.name, EXCLUDED.server_id, EXCLUDED.series_id,"
+    "  EXCLUDED.season_id, EXCLUDED.parent_id, EXCLUDED.run_time_ticks,"
+    "  EXCLUDED.index_number, EXCLUDED.parent_index_number)"
+)
+
 
 async def upsert_item(
     instance_id: int,
@@ -51,7 +66,7 @@ async def upsert_item(
                 "  run_time_ticks = EXCLUDED.run_time_ticks,"
                 "  index_number = EXCLUDED.index_number,"
                 "  parent_index_number = EXCLUDED.parent_index_number,"
-                "  updated_at = EXCLUDED.updated_at"
+                "  updated_at = EXCLUDED.updated_at" + _UPSERT_IF_CHANGED
             ),
             {
                 "instance_id": instance_id,
@@ -128,7 +143,7 @@ async def upsert_items_bulk(
                 "  run_time_ticks = EXCLUDED.run_time_ticks,"
                 "  index_number = EXCLUDED.index_number,"
                 "  parent_index_number = EXCLUDED.parent_index_number,"
-                "  updated_at = EXCLUDED.updated_at"
+                "  updated_at = EXCLUDED.updated_at" + _UPSERT_IF_CHANGED
             ),
             rows,
         )

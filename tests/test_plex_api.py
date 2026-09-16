@@ -68,6 +68,37 @@ class TestTestConnection:
             headers.get("X-Plex-Token") == "mytoken"
         ), f"Expected X-Plex-Token header, got headers={headers}"
 
+    async def test_probes_an_endpoint_that_needs_the_token(self):
+        """/identity is served without a token, so probing it passed any
+        token at all."""
+        from brein.integrations.api.plex import test_connection
+
+        mock_resp = _mock_response(200)
+        with patch("brein.integrations.api.plex.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(return_value=mock_resp)
+            mock_client_cls.return_value = mock_client
+            await test_connection("http://localhost:32400", "mytoken")
+        url = mock_client.get.call_args.args[0]
+        assert url == "http://localhost:32400/library/sections"
+
+    async def test_redirect_is_a_failure_naming_the_target(self):
+        from brein.integrations.api.plex import test_connection
+
+        mock_resp = _mock_response(301)
+        mock_resp.headers = {"location": "https://plex.example:32400/library/sections"}
+        with patch("brein.integrations.api.plex.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(return_value=mock_resp)
+            mock_client_cls.return_value = mock_client
+            ok, msg = await test_connection("http://localhost:32400", "mytoken")
+        assert ok is False
+        assert "https://plex.example:32400/library/sections" in msg
+
     async def test_invalid_token_401(self):
         from brein.integrations.api.plex import test_connection
 

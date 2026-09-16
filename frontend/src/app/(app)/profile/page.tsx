@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { apiFetch } from "@/lib/api";
-import type { User } from "@/lib/types";
+import { fetchCurrentUser } from "@/lib/current-user-server";
 import { ListPreferences } from "./list-preferences";
 import { PasswordForm } from "./password-form";
 import { ProfileForm } from "./profile-form";
@@ -8,7 +7,7 @@ import { ProfileForm } from "./profile-form";
 export const metadata: Metadata = { title: "Profile" };
 
 export default async function ProfilePage() {
-  const user = await apiFetch<User>("/users/me");
+  const user = await fetchCurrentUser();
 
   return (
     <div className="flex max-w-3xl flex-col gap-6">

@@ -5,14 +5,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from brein import config as brein_config
-from brein.db import get_session
 from brein.integrations.api import sabnzbd as sabnzbd_api
-from brein.store import instances as store_instances
 from brein.store import sabnzbd_stats as store_sabnzbd_stats
 from brein.web import auth as web_auth
+from brein.web.dependencies import require_instance_config
 from brein.web.schemas import User
 
 router = APIRouter()
@@ -24,18 +22,12 @@ WebUser = Annotated[User, Depends(web_auth.get_current_user_cookie_or_bearer)]
 AdminUserCookieOrBearer = Annotated[
     User, Depends(web_auth.get_current_admin_user_cookie_or_bearer)
 ]
-Session = Annotated[AsyncSession, Depends(get_session)]
 
 
 async def _get_sabnzbd_config(instance_id: int) -> tuple[str, str]:
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type != "sabnzbd":
-        raise HTTPException(status_code=400, detail="Not a SABnzbd instance")
+    _, base_url, api_key = await require_instance_config(
+        instance_id, "sabnzbd", detail="Not a SABnzbd instance"
+    )
     return base_url, api_key
 
 
@@ -137,19 +129,14 @@ async def api_instance_sabnzbd_stats_daily(
     Query params: ``start`` and ``end`` are ISO dates (``YYYY-MM-DD``). If omitted,
     ``end`` defaults to today (app timezone) and ``start`` to 13 days earlier (14 days inclusive).
     """
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, _, _ = cfg
-    if service_type != "sabnzbd":
-        raise HTTPException(status_code=404, detail="Instance not found")
+    await _get_sabnzbd_config(instance_id)
     tz_end = brein_config.get_local_date()
     if end is None:
         end = tz_end
     if start is None:
         start = end - timedelta(days=13)
     if start > end:
-        raise HTTPException(status_code=422, detail="start must be on or before end")
+        raise HTTPException(status_code=400, detail="start must be on or before end")
     labels, gigabytes = await store_sabnzbd_stats.get_daily_series_gigabytes(
         instance_id, start, end
     )

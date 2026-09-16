@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { apiFetch } from "@/lib/api";
+import { fetchCurrentUser } from "@/lib/current-user-server";
 import { serviceIcon } from "@/lib/service-types";
 import { fetchServiceTypes } from "@/lib/service-types-server";
-import type { InstanceDetail, User } from "@/lib/types";
+import type { InstanceDetail } from "@/lib/types";
 import { externalHref } from "@/lib/url";
 import { InstanceTabs } from "./instance-tabs";
 
@@ -12,7 +13,7 @@ export default async function InstanceLayout(
   const { id } = await props.params;
   const [instance, user, types] = await Promise.all([
     apiFetch<InstanceDetail>(`/api/instances/${id}`),
-    apiFetch<User>("/users/me"),
+    fetchCurrentUser(),
     fetchServiceTypes(),
   ]);
 

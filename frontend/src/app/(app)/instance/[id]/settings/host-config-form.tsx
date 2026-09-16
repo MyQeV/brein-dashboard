@@ -4,7 +4,8 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
-import { type ActionResult, saveHostConfig } from "./actions";
+import type { ActionResult } from "@/lib/actions";
+import { saveHostConfig } from "./actions";
 
 /** The subset the API accepts; anything else in the payload is read-only. */
 const EDITABLE = [
@@ -42,8 +43,12 @@ export function HostConfigForm({
       };
       for (const { key, type } of EDITABLE) {
         const raw = values[key] ?? "";
-        if (raw === "") continue;
         if (type === "number") {
+          // A port cannot be empty; a blank one keeps what the service has.
+          // The text fields go through blank, so the URL base *can* be
+          // cleared — the API keeps "" (it only drops None) and passes it
+          // on, where before an emptied field was silently left as it was.
+          if (raw === "") continue;
           const parsed = Number.parseInt(raw, 10);
           if (!Number.isFinite(parsed)) {
             setResult({ ok: false, error: `${key} must be a whole number.` });

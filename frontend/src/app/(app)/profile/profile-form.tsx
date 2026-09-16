@@ -4,8 +4,9 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, ReadOnlyField } from "@/components/ui/field";
+import type { ActionResult } from "@/lib/actions";
 import type { User } from "@/lib/types";
-import { type ActionResult, saveProfile } from "./actions";
+import { saveProfile } from "./actions";
 
 export function ProfileForm({ user }: { user: User }) {
   const [email, setEmail] = useState(user.email ?? "");

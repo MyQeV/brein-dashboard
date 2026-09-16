@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { PATH_HEADER } from "@/lib/api";
 
 /** Next 16 renamed `middleware.ts` to `proxy.ts`.
  *
@@ -8,7 +9,6 @@ import { type NextRequest, NextResponse } from "next/server";
  * and route must still authorize on its own. The API does exactly that. */
 
 const ACCESS_COOKIE = "brein_access_token";
-const REFRESH_COOKIE = "brein_refresh_token";
 
 // Screens that must render without a session.
 const PUBLIC_PATHS = ["/login", "/setup"];
@@ -21,10 +21,12 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const hasSession =
-    request.cookies.has(ACCESS_COOKIE) || request.cookies.has(REFRESH_COOKIE);
-
-  if (!hasSession) {
+  // The access cookie alone decides. Its max-age is the token's lifetime, so
+  // after half an hour idle only the refresh cookie is left — and letting
+  // that through meant every server render was refused by the API and
+  // bounced to /login with the destination lost. The login page refreshes
+  // the session and comes straight back to `next`, without showing a form.
+  if (!request.cookies.has(ACCESS_COOKIE)) {
     const login = new URL("/login", request.url);
     // Keep the query string: dropping it sends people back to a list page
     // without the filters they had applied.
@@ -32,7 +34,12 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(login);
   }
 
-  return NextResponse.next();
+  // Server components cannot see the URL they render for; carry it so a 401
+  // mid-render can send the user back here once they have signed in again.
+  // Set, not appended: a client cannot plant one.
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set(PATH_HEADER, pathname + search);
+  return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
 export const config = {

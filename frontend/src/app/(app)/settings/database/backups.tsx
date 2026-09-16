@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { clientFetch } from "@/lib/client-fetch";
 import { formatBytes, formatDateTime } from "@/lib/format";
+import { useTimeZone } from "@/lib/timezone-context";
 
 type Backup = { name: string; size: number; modified: number };
 
@@ -18,6 +19,7 @@ export function Backups() {
   const [state, setState] = useState<State>({ status: "loading" });
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const timeZone = useTimeZone();
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -94,7 +96,10 @@ export function Backups() {
                   {backup.name}
                 </span>
                 <span className="shrink-0 text-muted">
-                  {formatDateTime(new Date(backup.modified * 1000).toISOString())}
+                  {formatDateTime(
+                    new Date(backup.modified * 1000).toISOString(),
+                    timeZone,
+                  )}
                 </span>
                 <span className="shrink-0 tabular-nums text-muted">
                   {formatBytes(backup.size)}

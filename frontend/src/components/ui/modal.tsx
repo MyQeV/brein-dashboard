@@ -62,7 +62,7 @@ export function Modal({
       // Anchored near the top rather than centred: a centred dialog grows from
       // both edges, so expanding a row jumps the whole thing upwards. This way
       // the top edge holds still and the content only grows downwards.
-      className="fixed inset-0 z-600 flex items-start justify-center overflow-y-auto bg-(--scrim) lg:p-4 lg:pt-[7dvh]"
+      className="fixed inset-0 z-(--z-modal) flex items-start justify-center overflow-y-auto bg-(--scrim) lg:p-4 lg:pt-[7dvh]"
       role="presentation"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();

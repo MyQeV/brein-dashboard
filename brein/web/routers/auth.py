@@ -94,6 +94,34 @@ def _parse_remember_me(value: str | None) -> bool:
     return str(value).strip().lower() in ("true", "on", "1", "yes")
 
 
+def _token_body(
+    access_token: str, refresh_token: str, *, cookie_flow: bool
+) -> dict[str, str]:
+    """The JSON body for a token response.
+
+    The cookies are the credential for a browser session, and echoing the
+    same tokens in the body hands script on the page — an XSS payload — what
+    httpOnly exists to keep from it. A bearer API client has no cookie jar and
+    needs them in the body, so the body is stripped only for the cookie flow.
+    """
+    if cookie_flow:
+        return {"token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "refresh_token": refresh_token,
+    }
+
+
+def _is_browser_request(request: Request) -> bool:
+    """Whether the caller is a browser, which will use the cookies.
+
+    A browser attaches Origin to every POST it makes with fetch or a form;
+    curl, scripts and other bearer clients do not send one.
+    """
+    return bool(request.headers.get("origin"))
+
+
 def _set_csrf_cookie(request: Request, response: Response) -> None:
     """Issue the CSRF token alongside the auth cookies.
 
@@ -137,11 +165,13 @@ async def login_for_access_token(
     user, failed_user_id = await web_auth.authenticate_user(
         form_data.username, form_data.password
     )
+    if user is not None and user.disabled:
+        # A disabled account must not be told apart from a wrong password:
+        # counted as a failure and refused with the same answer.
+        failed_user_id, user = user.id, None
     if not user:
         if failed_user_id is not None:
-            await store_users.record_login_failure(
-                failed_user_id, ip=_ip, user_agent=_ua
-            )
+            await store_users.record_login_failure(failed_user_id)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -162,11 +192,9 @@ async def login_for_access_token(
     expires_at = time.time() + (refresh_days * 24 * 3600)
     refresh_plaintext, _ = await store_refresh_tokens.create(user.id, expires_at)
     run_on_login_tasks()
-    content = {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "refresh_token": refresh_plaintext,
-    }
+    content = _token_body(
+        access_token, refresh_plaintext, cookie_flow=_is_browser_request(request)
+    )
     response = JSONResponse(content=content)
     cookie_max_age = brein_config.ACCESS_TOKEN_EXPIRE_MINUTES * 60
     response.set_cookie(
@@ -204,6 +232,7 @@ async def refresh_access_token(
             detail="Auth not configured (SECRET_KEY missing)",
         )
     effective = body or RefreshRequest()
+    cookie_flow = bool(request.cookies.get(web_auth.REFRESH_TOKEN_COOKIE_NAME))
     refresh_plaintext = (
         request.cookies.get(web_auth.REFRESH_TOKEN_COOKIE_NAME)
         or (effective.refresh_token or "").strip()
@@ -215,6 +244,17 @@ async def refresh_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     token_info = await store_refresh_tokens.get_token_info(refresh_plaintext)
+    replacement = None
+    if not token_info:
+        # Two tabs refreshing at once present the same token; the first
+        # rotated it away. Within the grace window the second gets the same
+        # replacement — provided that replacement is itself still valid, so
+        # a logout in between is still a logout.
+        replacement = await store_refresh_tokens.get_rotation_replacement(
+            refresh_plaintext
+        )
+        if replacement:
+            token_info = await store_refresh_tokens.get_token_info(replacement)
     if not token_info:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -231,20 +271,18 @@ async def refresh_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     username = row.get("username") or ""
-    # Rotate: create new token first, then revoke old one
-    # Order matters: if create fails, old token remains valid (no session loss)
-    new_refresh_plaintext, _ = await store_refresh_tokens.create(user_id, expires_at)
-    await store_refresh_tokens.revoke_by_token(refresh_plaintext)
+    if replacement:
+        new_refresh_plaintext = replacement
+    else:
+        new_refresh_plaintext, _ = await store_refresh_tokens.rotate(
+            refresh_plaintext, user_id, expires_at
+        )
     access_token_expires = timedelta(minutes=brein_config.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = web_auth.create_access_token(
         data={"sub": username},
         expires_delta=access_token_expires,
     )
-    content = {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "refresh_token": new_refresh_plaintext,
-    }
+    content = _token_body(access_token, new_refresh_plaintext, cookie_flow=cookie_flow)
     response = JSONResponse(content=content)
     cookie_max_age = brein_config.ACCESS_TOKEN_EXPIRE_MINUTES * 60
     response.set_cookie(
@@ -300,6 +338,7 @@ async def change_password(
     request: Request,
     body: ChangePasswordRequest,
     current_user: Annotated[User, Depends(web_auth.get_current_active_user)],
+    token_header: Annotated[str | None, Depends(web_auth.oauth2_scheme_optional)],
 ) -> None:
     """Change current user password."""
     row = await store_users.get_user_by_id(current_user.id)
@@ -321,6 +360,23 @@ async def change_password(
     hashed = web_auth.get_password_hash(body.new_password)
     await store_users.update_user(current_user.id, hashed_password=hashed)
     await store_refresh_tokens.revoke_all_for_user(current_user.id)
+    # Revoking the refresh tokens ends every session at its next refresh, but
+    # an access token already issued stays valid until it expires — up to
+    # ACCESS_TOKEN_EXPIRE_MINUTES. Access tokens carry no user version to
+    # check against, so only the one making this request can be killed here;
+    # any other session's keeps working for the rest of that window.
+    token = token_header or request.cookies.get(web_auth.ACCESS_TOKEN_COOKIE_NAME)
+    if token:
+        try:
+            payload = jwt.decode(
+                token, brein_config.SECRET_KEY, algorithms=[brein_config.ALGORITHM]
+            )
+        except InvalidTokenError:
+            payload = {}
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        if jti is not None and exp is not None:
+            await store_blacklist.add_to_blacklist(jti, float(exp))
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

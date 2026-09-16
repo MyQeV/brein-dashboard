@@ -8,6 +8,7 @@ import { softApiFetch } from "@/lib/api";
 import { formatCount, formatDateTime, formatDuration, readPath } from "@/lib/format";
 import { buildQuery, firstParam } from "@/lib/params";
 import { rowNumber, rowText } from "@/lib/rows";
+import { appTimeZone } from "@/lib/timezone";
 import type { UserDashboard } from "@/lib/types";
 import { UserPicker } from "./user-picker";
 
@@ -46,7 +47,7 @@ export default async function UserDashboardPage(
   const data = result.data as Exclude<UserDashboard, { supported: false }>;
   const basePath = `/instance/${id}/user-dashboard`;
   const lastActivity = data.stats?.last_activity
-    ? formatDateTime(data.stats.last_activity).split(", ")
+    ? formatDateTime(data.stats.last_activity, appTimeZone()).split(", ")
     : [];
 
   return (
@@ -109,10 +110,14 @@ export default async function UserDashboardPage(
               />
             </Card>
 
+            {/* Keyed on the store's `group_key` (the series or item id): the
+                label is "Unknown series" for every series whose parent has
+                not synced, and repeated keys would drop bars. */}
             <Card title="Top series">
               <BarChart
                 orientation="horizontal"
                 data={data.stats.top_series.slice(0, 10).map((row) => ({
+                  id: rowText(row, ["group_key"]) || undefined,
                   label: rowText(row, ["display_name"], "—"),
                   value: rowNumber(row, ["total_seconds"]),
                 }))}
@@ -125,6 +130,7 @@ export default async function UserDashboardPage(
               <BarChart
                 orientation="horizontal"
                 data={data.stats.top_movies.slice(0, 10).map((row) => ({
+                  id: rowText(row, ["group_key"]) || undefined,
                   label: rowText(row, ["display_name"], "—"),
                   value: rowNumber(row, ["total_seconds"]),
                 }))}
@@ -154,7 +160,10 @@ export default async function UserDashboardPage(
                   key: "date",
                   header: "When",
                   render: (row) =>
-                    formatDateTime(readPath(row, "date") ?? row.last_played),
+                    formatDateTime(
+                      readPath(row, "date") ?? row.last_played,
+                      appTimeZone(),
+                    ),
                 },
               ]}
             />

@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { ApiNotice } from "@/components/ui/notice";
 import { softApiFetch } from "@/lib/api";
 import { formatBytes, formatDateTime } from "@/lib/format";
+import { appTimeZone } from "@/lib/timezone";
 import type { DownloadCapabilities, DownloadHistoryItem } from "@/lib/types";
 import { MarkCompletedButton, RetryAllButton } from "./history-actions";
 
@@ -13,9 +14,9 @@ export const metadata: Metadata = { title: "History" };
 function completed(value: string | number | null): string {
   if (value === null || value === "") return "—";
   if (typeof value === "number") {
-    return formatDateTime(new Date(value * 1000).toISOString());
+    return formatDateTime(new Date(value * 1000).toISOString(), appTimeZone());
   }
-  return formatDateTime(value);
+  return formatDateTime(value, appTimeZone());
 }
 
 export default async function DownloadHistoryPage(

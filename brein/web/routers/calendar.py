@@ -1,6 +1,7 @@
 """Calendar API: unified Sonarr (episodes) + Radarr (movies) calendar."""
 
 import asyncio
+import logging
 import re
 from datetime import datetime
 from typing import Annotated, Any
@@ -12,6 +13,8 @@ from brein.integrations.api import sonarr as sonarr_api
 from brein.web import auth as web_auth
 from brein.web.schemas import User
 from brein.store import instances as store_instances
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 CurrentUser = Annotated[User, Depends(web_auth.get_current_active_user)]
@@ -117,19 +120,40 @@ def _collect_release_types(item: dict, movie: dict) -> list[str]:
 
 
 def _normalize_radarr_event(
-    item: dict, instance_id: int, instance_label: str, instance_base_url: str = ""
+    item: dict,
+    instance_id: int,
+    instance_label: str,
+    instance_base_url: str = "",
+    start: str = "",
+    end: str = "",
 ) -> dict[str, Any] | None:
-    """Convert Radarr calendar item to unified event. Returns None if no valid date."""
+    """Convert Radarr calendar item to unified event. Returns None if no valid date.
+
+    A movie has up to three release dates, and Radarr lists it because one
+    of them falls in the window asked for. The event goes on the first one
+    that does, since a fixed preference for the digital date put a cinema
+    release this week on a digital date months away — outside the window,
+    and so off the calendar. Without a window, or with none of the dates in
+    it, the old preference stands.
+    """
     movie = item.get("movie") or item
     title = (movie.get("title") or item.get("title") or "").strip() or "—"
-    date_str = _date_to_yyyy_mm_dd(
-        item.get("digitalRelease")
-        or item.get("physicalRelease")
-        or item.get("inCinemas")
-        or movie.get("digitalRelease")
-        or movie.get("physicalRelease")
-        or movie.get("inCinemas")
-    )
+    dates = [
+        _date_to_yyyy_mm_dd(value)
+        for value in (
+            item.get("digitalRelease"),
+            item.get("physicalRelease"),
+            item.get("inCinemas"),
+            movie.get("digitalRelease"),
+            movie.get("physicalRelease"),
+            movie.get("inCinemas"),
+        )
+    ]
+    date_str = None
+    if start and end:
+        date_str = next((d for d in dates if d and start <= d <= end), None)
+    if date_str is None:
+        date_str = next((d for d in dates if d), None)
     if not date_str:
         return None
     subtitle = " / ".join(_collect_release_types(item, movie))
@@ -218,7 +242,9 @@ async def _fetch_radarr_events(
         for item in data
         if isinstance(item, dict)
         for ev in [
-            _normalize_radarr_event(item, instance_id, label, link_url or base_url)
+            _normalize_radarr_event(
+                item, instance_id, label, link_url or base_url, start, end
+            )
         ]
         if ev
     ]
@@ -279,8 +305,17 @@ async def api_calendar(
         return_exceptions=True,
     )
     events: list[dict[str, Any]] = []
-    for r in results:
+    for inst, r in zip(calendar_instances, results):
         if isinstance(r, list):
             events.extend(r)
+        else:
+            # One instance failing must not empty the calendar, but it must
+            # not vanish without a trace either.
+            log.warning(
+                "Calendar: dropped events of instance %s (%s): %r",
+                inst.get("id"),
+                inst.get("label") or inst.get("service_type"),
+                r,
+            )
     events.sort(key=lambda e: (e.get("date") or "", e.get("title") or ""))
     return events

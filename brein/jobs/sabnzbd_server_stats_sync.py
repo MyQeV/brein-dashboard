@@ -30,6 +30,13 @@ async def _sync_one_instance(instance_id: int, inst_id: object) -> None:
         "SABnzbd server_stats sync: stored snapshot for instance_id=%s",
         instance_id,
     )
+    removed = await store_sabnzbd_stats.prune_snapshots(instance_id)
+    if removed:
+        log.info(
+            "SABnzbd server_stats sync: pruned %d old snapshots for instance_id=%s",
+            removed,
+            instance_id,
+        )
 
 
 async def run_sabnzbd_server_stats_sync_once(

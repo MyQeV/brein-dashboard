@@ -1,24 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
-import { apiFetch } from "@/lib/api";
+import { fetchInstances } from "@/lib/instances-server";
 import { serviceIcon } from "@/lib/service-types";
 import { fetchServiceTypes } from "@/lib/service-types-server";
-import type { Instance } from "@/lib/types";
 import { AddAppGrid } from "./add-app-grid";
 
 export const metadata: Metadata = { title: "Apps" };
 
 export default async function SettingsAppPage() {
-  const [types, instancesResponse] = await Promise.all([
-    fetchServiceTypes(),
-    apiFetch<{ instances: Instance[] } | Instance[]>("/api/instances"),
-  ]);
+  const [types, instances] = await Promise.all([fetchServiceTypes(), fetchInstances()]);
   const service_types = Object.values(types);
-
-  const instances = Array.isArray(instancesResponse)
-    ? instancesResponse
-    : (instancesResponse.instances ?? []);
 
   return (
     <div className="flex flex-col gap-6">

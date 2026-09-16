@@ -3,6 +3,7 @@ import { StatTile } from "@/components/charts/stat-tile";
 import { Card } from "@/components/ui/card";
 import { apiFetch } from "@/lib/api";
 import { formatBytes, formatDateTime } from "@/lib/format";
+import { appTimeZone } from "@/lib/timezone";
 import type { DownloadTotals } from "@/lib/types";
 import { DownloadsDailyChart } from "./daily-chart";
 
@@ -31,7 +32,7 @@ export default async function DownloadsPage() {
             {entry.label}
             <span className="ml-2 font-normal text-muted">
               {entry.collected_at
-                ? `updated ${formatDateTime(entry.collected_at)}`
+                ? `updated ${formatDateTime(entry.collected_at, appTimeZone())}`
                 : "no statistics collected yet"}
             </span>
           </h2>

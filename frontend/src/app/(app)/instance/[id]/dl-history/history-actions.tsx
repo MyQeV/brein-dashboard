@@ -3,11 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  type ActionResult,
-  markHistoryCompleted,
-  retryAllHistory,
-} from "../dl-queue/actions";
+import type { ActionResult } from "@/lib/actions";
+import { markHistoryCompleted, retryAllHistory } from "../dl-queue/actions";
 
 /**
  * Retry every failed item, from the history header.

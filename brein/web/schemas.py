@@ -105,9 +105,10 @@ class UserInDB(User):
 
 
 class Token(BaseModel):
-    """OAuth2 token response (login)."""
+    """OAuth2 token response (login). Cookie-flow responses carry only
+    token_type; the tokens travel in the cookies."""
 
-    access_token: str
+    access_token: str | None = None
     token_type: str
     refresh_token: str | None = None
 
