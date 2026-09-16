@@ -114,15 +114,13 @@ async def sabnzbd_settings(
     # mode=status answers {"status": {...}}; the page lists what it is given,
     # so it saw one key holding an object. Unwrap it and keep the fields worth
     # a row, version first.
-    status = status_data.get("status") if aok and isinstance(status_data, dict) else None
+    status = (
+        status_data.get("status") if aok and isinstance(status_data, dict) else None
+    )
     status = status if isinstance(status, dict) else {}
     out: dict[str, Any] = {
         "settings_sab_status": (
-            {
-                key: status[key]
-                for key in _SAB_STATUS_FIELDS
-                if key in status
-            }
+            {key: status[key] for key in _SAB_STATUS_FIELDS if key in status}
             if aok
             else None
         ),
