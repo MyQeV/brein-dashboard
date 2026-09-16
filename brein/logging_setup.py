@@ -77,6 +77,13 @@ def setup_logging() -> None:
                     "level": "WARNING",
                     "propagate": False,
                 },
+                # websockets logs the upgrade request at DEBUG, and the Emby
+                # and Plex listeners carry their token in that URL.
+                "websockets": {
+                    "handlers": ["console", "file"],
+                    "level": "WARNING",
+                    "propagate": False,
+                },
                 "uvicorn.error": {
                     "handlers": ["console", "file"],
                     "level": "INFO",

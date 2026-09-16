@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { apiFetch } from "@/lib/api";
 import { buildQuery, firstParam } from "@/lib/params";
+import { appTimeZone } from "@/lib/timezone";
 import type { MediaMetrics } from "@/lib/types";
 import { DateRange } from "../date-range";
 import { DailyView } from "./daily-view";
@@ -12,7 +13,7 @@ export const metadata: Metadata = { title: "Daily" };
  * passes it to both).
  */
 function today(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: process.env.TZ || "UTC" });
+  return new Date().toLocaleDateString("en-CA", { timeZone: appTimeZone() });
 }
 
 function daysBefore(iso: string, days: number): string {

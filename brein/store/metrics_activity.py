@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from brein import config as brein_config
 from brein.db import get_session_factory
 from brein.store.metrics_helpers import (
+    _LIVE_TV_SQL,
     _UTC_TEXT_WINDOW,
     _UTC_TEXT_WINDOW_BARE,
     _date_range_where,
@@ -28,69 +29,57 @@ from brein.store.metrics_users import (
 )
 
 
-async def _get_total_plays(
+async def _get_snapshot_totals(
     session: AsyncSession,
     start_date: str,
     end_date: str,
     instance_id: int | list[int] | None = None,
     user_ids: list[str] | None = None,
-) -> int:
+) -> dict[str, int]:
+    """The scalar tiles that come straight off a snapshot table, in one query.
+
+    Without a user filter that is plays, watch time, episodes and live TV
+    from emby_metrics_snapshot; with one, plays and watch time from
+    emby_metrics_snapshot_user (episodes and live TV then need the sessions —
+    see the per-tile helpers). One round trip instead of four on a session
+    that cannot run them concurrently anyway.
+    """
     dr, dr_p = _date_range_where(start_date, end_date)
     inst_w, inst_p = _instance_filter(instance_id)
     if user_ids:
         usr_w, usr_p = _user_instance_filter(
             user_ids, "instance_id", "CAST(user_id AS TEXT)"
         )
-        params = {**dr_p, **inst_p, **usr_p}
-        result = await session.execute(
+        row = (
+            await session.execute(
+                text(
+                    f"SELECT COALESCE(SUM(plays), 0), COALESCE(SUM(watch_time_seconds), 0)"
+                    f" FROM emby_metrics_snapshot_user WHERE 1=1{dr}{inst_w}{usr_w}"
+                ),
+                {**dr_p, **inst_p, **usr_p},
+            )
+        ).fetchone()
+        return {
+            "total_plays": int(row[0]) if row else 0,
+            "total_watch_time_seconds": int(row[1]) if row else 0,
+        }
+    row = (
+        await session.execute(
             text(
-                f"SELECT COALESCE(SUM(plays), 0) FROM emby_metrics_snapshot_user WHERE 1=1{dr}{inst_w}{usr_w}"
-            ),
-            params,
-        )
-    else:
-        params = {**dr_p, **inst_p}
-        result = await session.execute(
-            text(
-                f"SELECT COALESCE(SUM(total_plays), 0) FROM emby_metrics_snapshot WHERE 1=1{dr}{inst_w}"
-            ),
-            params,
-        )
-    row = result.fetchone()
-    return int(row[0]) if row else 0
-
-
-async def _get_total_watch_time_seconds(
-    session: AsyncSession,
-    start_date: str,
-    end_date: str,
-    instance_id: int | list[int] | None = None,
-    user_ids: list[str] | None = None,
-) -> int:
-    dr, dr_p = _date_range_where(start_date, end_date)
-    inst_w, inst_p = _instance_filter(instance_id)
-    if user_ids:
-        usr_w, usr_p = _user_instance_filter(
-            user_ids, "instance_id", "CAST(user_id AS TEXT)"
-        )
-        params = {**dr_p, **inst_p, **usr_p}
-        result = await session.execute(
-            text(
-                f"SELECT COALESCE(SUM(watch_time_seconds), 0) FROM emby_metrics_snapshot_user WHERE 1=1{dr}{inst_w}{usr_w}"
-            ),
-            params,
-        )
-    else:
-        params = {**dr_p, **inst_p}
-        result = await session.execute(
-            text(
-                f"SELECT COALESCE(SUM(total_watch_time_seconds), 0)"
+                f"SELECT COALESCE(SUM(total_plays), 0),"
+                f" COALESCE(SUM(total_watch_time_seconds), 0),"
+                f" COALESCE(SUM(total_episodes), 0), COALESCE(SUM(total_live_tv), 0)"
                 f" FROM emby_metrics_snapshot WHERE 1=1{dr}{inst_w}"
             ),
-            params,
+            {**dr_p, **inst_p},
         )
-    row = result.fetchone()
-    return int(row[0]) if row else 0
+    ).fetchone()
+    return {
+        "total_plays": int(row[0]) if row else 0,
+        "total_watch_time_seconds": int(row[1]) if row else 0,
+        "total_watched_episodes": int(row[2]) if row else 0,
+        "total_watched_live_tv": int(row[3]) if row else 0,
+    }
 
 
 async def _get_total_watched_movies(
@@ -273,7 +262,7 @@ async def _get_total_watched_live_tv(
                 LEFT JOIN emby_items i
                     ON i.instance_id = s.instance_id
                    AND i.item_id = CAST(s.item_id AS TEXT)
-                WHERE i.type IN ('LiveTvChannel', 'Program')
+                WHERE i.type IN {_LIVE_TV_SQL}
                   AND (LEFT(s.start_time, 19)::timestamp AT TIME ZONE 'UTC' AT TIME ZONE :tz)::date::text >= :start_date
                   AND (LEFT(s.start_time, 19)::timestamp AT TIME ZONE 'UTC' AT TIME ZONE :tz)::date::text <= :end_date
                   {_UTC_TEXT_WINDOW}
@@ -428,6 +417,7 @@ async def _get_watch_time_per_user_per_day(
             LEFT JOIN emby_users u
                 ON u.instance_id = s.instance_id
                AND u.user_item_id = CAST(s.user_id AS TEXT)
+               AND u.is_deleted = 0
             WHERE 1=1
               AND (LEFT(s.start_time, 19)::timestamp AT TIME ZONE 'UTC' AT TIME ZONE :tz)::date::text >= :start_date
               AND (LEFT(s.start_time, 19)::timestamp AT TIME ZONE 'UTC' AT TIME ZONE :tz)::date::text <= :end_date
@@ -471,15 +461,24 @@ async def get_all_metrics(
 ) -> dict[str, Any]:
     """Return all dashboard metrics for the date range from snapshot tables."""
     async with get_session_factory()() as session:
-        total_plays = await _get_total_plays(
+        totals = await _get_snapshot_totals(
             session, start_date, end_date, instance_id, user_ids
         )
-        total_watch_time = await _get_total_watch_time_seconds(
-            session, start_date, end_date, instance_id, user_ids
-        )
+        total_plays = totals["total_plays"]
+        total_watch_time = totals["total_watch_time_seconds"]
         avg_session_seconds = (
             round(total_watch_time / total_plays) if total_plays > 0 else 0
         )
+        if user_ids:
+            total_episodes = await _get_total_watched_episodes(
+                session, start_date, end_date, instance_id, user_ids
+            )
+            total_live_tv = await _get_total_watched_live_tv(
+                session, start_date, end_date, instance_id, user_ids
+            )
+        else:
+            total_episodes = totals["total_watched_episodes"]
+            total_live_tv = totals["total_watched_live_tv"]
         return {
             "start_date": start_date,
             "end_date": end_date,
@@ -501,15 +500,11 @@ async def get_all_metrics(
             "total_watched_movies": await _get_total_watched_movies(
                 session, start_date, end_date, instance_id, user_ids
             ),
-            "total_watched_episodes": await _get_total_watched_episodes(
-                session, start_date, end_date, instance_id, user_ids
-            ),
+            "total_watched_episodes": total_episodes,
             "total_watched_series": await _get_total_watched_series(
                 session, start_date, end_date, instance_id, user_ids
             ),
-            "total_watched_live_tv": await _get_total_watched_live_tv(
-                session, start_date, end_date, instance_id, user_ids
-            ),
+            "total_watched_live_tv": total_live_tv,
             "watch_time_by_media_type": await _get_watch_time_by_media_type(
                 session, start_date, end_date, instance_id, user_ids
             ),

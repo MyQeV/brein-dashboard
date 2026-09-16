@@ -1,15 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { ApiError, apiFetch, isRedirectError } from "@/lib/api";
-
-export type ActionResult = { ok: true } | { ok: false; error: string };
-
-function toResult(error: unknown): ActionResult {
-  if (isRedirectError(error)) throw error;
-  if (error instanceof ApiError) return { ok: false, error: error.message };
-  return { ok: false, error: "Something went wrong. Please try again." };
-}
+import { type ActionResult, toResult } from "@/lib/actions";
+import { apiFetch } from "@/lib/api";
 
 export async function updateUserRole(
   userId: string,

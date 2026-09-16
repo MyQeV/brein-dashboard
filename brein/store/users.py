@@ -14,6 +14,24 @@ ROLE_VIEWER = "viewer"
 ROLE_USER = "user"
 VALID_ROLES = {ROLE_ADMIN, ROLE_VIEWER, ROLE_USER}
 
+# Per-account brute-force lockout: this many failures, each within the window
+# of the one before, lock the account until the window has passed since the
+# last one. Counted by username, so it holds even when every login arrives
+# from one address (the bundled frontend's proxy) and the IP limit is shared.
+LOGIN_LOCKOUT_ATTEMPTS = 10
+LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
+
+
+def login_locked(row: dict[str, Any], now: float | None = None) -> bool:
+    """Whether a user row is inside its lockout window."""
+    attempts = int(row.get("failed_login_attempts") or 0)
+    last_failed = row.get("last_failed_login_at")
+    if attempts < LOGIN_LOCKOUT_ATTEMPTS or last_failed is None:
+        return False
+    return (now if now is not None else time.time()) - float(
+        last_failed
+    ) < LOGIN_FAILURE_WINDOW_SECONDS
+
 
 def _resolve_role(role: str | None, is_admin: bool | None) -> str:
     """Normalise role string; fall back to is_admin flag when role not supplied."""
@@ -30,7 +48,8 @@ async def get_user_by_username(username: str) -> dict[str, Any] | None:
         result = await session.execute(
             text(
                 "SELECT id, username, hashed_password, email, full_name, is_admin, disabled, created_at, role,"
-                " emby_instance_id, emby_username, jellyfin_instance_id, jellyfin_username"
+                " emby_instance_id, emby_username, jellyfin_instance_id, jellyfin_username,"
+                " failed_login_attempts, last_failed_login_at"
                 " FROM users WHERE username = :username"
             ),
             {"username": username.strip()},
@@ -214,18 +233,25 @@ async def record_login_success(
         await session.commit()
 
 
-async def record_login_failure(
-    user_id: str,
-    ip: str | None = None,
-    user_agent: str | None = None,
-) -> None:
-    """Record a failed login attempt: increment failed_login_attempts and update last_failed_login_at."""
+async def record_login_failure(user_id: str) -> None:
+    """Record a failed login attempt: increment failed_login_attempts and update last_failed_login_at.
+
+    The count restarts at one when the previous failure is older than the
+    window, so only failures that follow each other closely add up to a lockout.
+    """
+    now = time.time()
     async with get_session_factory()() as session:
         await session.execute(
             text(
-                "UPDATE users SET failed_login_attempts = failed_login_attempts + 1,"
+                "UPDATE users SET failed_login_attempts = CASE"
+                " WHEN last_failed_login_at IS NULL OR last_failed_login_at < :window_start"
+                " THEN 1 ELSE failed_login_attempts + 1 END,"
                 " last_failed_login_at = :ts WHERE id = :id"
             ),
-            {"ts": time.time(), "id": user_id},
+            {
+                "ts": now,
+                "window_start": now - LOGIN_FAILURE_WINDOW_SECONDS,
+                "id": user_id,
+            },
         )
         await session.commit()

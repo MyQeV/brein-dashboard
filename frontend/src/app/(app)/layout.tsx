@@ -1,8 +1,10 @@
 import { Shell } from "@/components/layout/shell";
-import { apiFetch } from "@/lib/api";
+import { fetchCurrentUser } from "@/lib/current-user-server";
+import { fetchInstances } from "@/lib/instances-server";
 import { ServiceTypesProvider } from "@/lib/service-types-context";
 import { fetchServiceTypes } from "@/lib/service-types-server";
-import type { Instance, User } from "@/lib/types";
+import { appTimeZone } from "@/lib/timezone";
+import { TimeZoneProvider } from "@/lib/timezone-context";
 
 /**
  * Signed-in shell. Loads only what the chrome needs — the current user, the
@@ -11,18 +13,18 @@ import type { Instance, User } from "@/lib/types";
  */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const [user, instances, types] = await Promise.all([
-    apiFetch<User>("/users/me"),
-    apiFetch<{ instances: Instance[] } | Instance[]>("/api/instances"),
+    fetchCurrentUser(),
+    fetchInstances(),
     fetchServiceTypes(),
   ]);
 
-  const list = Array.isArray(instances) ? instances : instances.instances;
-
   return (
-    <ServiceTypesProvider value={types}>
-      <Shell user={user} instances={list ?? []}>
-        {children}
-      </Shell>
-    </ServiceTypesProvider>
+    <TimeZoneProvider value={appTimeZone()}>
+      <ServiceTypesProvider value={types}>
+        <Shell user={user} instances={instances}>
+          {children}
+        </Shell>
+      </ServiceTypesProvider>
+    </TimeZoneProvider>
   );
 }

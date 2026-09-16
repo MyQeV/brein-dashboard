@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CONTROL_HEIGHT } from "@/components/ui/control";
+import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { clientFetch } from "@/lib/client-fetch";
 
@@ -94,34 +95,36 @@ export function LogViewer() {
       }
     >
       <div className="mb-3 flex flex-wrap items-end gap-2">
-        <label className="flex flex-col gap-1 text-sm">
+        <label htmlFor="log-file" className="flex flex-col gap-1 text-sm">
           File
-          <select
+          <Select
+            id="log-file"
+            size="sm"
             value={file}
             onChange={(event) => setFile(event.target.value)}
-            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           >
             {files.map((entry) => (
               <option key={entry.name} value={entry.name}>
                 {entry.name} ({Math.round(entry.size / 1024)} KB)
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
-        <label className="flex flex-col gap-1 text-sm">
+        <label htmlFor="log-level" className="flex flex-col gap-1 text-sm">
           Level
-          <select
+          <Select
+            id="log-level"
+            size="sm"
             value={level}
             onChange={(event) => setLevel(event.target.value)}
-            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           >
             {LEVELS.map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
         <label className="flex flex-col gap-1 text-sm">

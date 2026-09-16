@@ -5,9 +5,18 @@ import json
 import logging
 import time
 from typing import Annotated
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
+from brein import background
 from brein import cache as brein_cache
 from brein import config as brein_config
 from brein.integrations import emby as emby_integration
@@ -26,6 +35,7 @@ log = logging.getLogger(__name__)
 BROADCAST_SEND_TIMEOUT = 5.0
 
 _last_plex_snapshot_rebuild: float = 0.0
+_plex_snapshot_rebuild_running = False
 router = APIRouter()
 CurrentUser = Annotated[User, Depends(web_auth.get_current_active_user)]
 
@@ -52,12 +62,45 @@ async def broadcast_now_playing(payload: dict) -> None:
         ),
         return_exceptions=True,
     )
-    for ws, result in zip(targets, results):
-        if isinstance(result, BaseException):
-            _ws_connections.discard(ws)
+    dead = [
+        ws for ws, result in zip(targets, results) if isinstance(result, BaseException)
+    ]
+    for ws in dead:
+        _ws_connections.discard(ws)
+    if dead:
+        # Forgetting the socket is not enough: its handler sits in
+        # receive_text() until the peer says something, which a half-open
+        # client never does. Closing it ends the handler too.
+        await asyncio.gather(*(_close_quietly(ws) for ws in dead))
     n = len(_ws_connections)
     if n > 0:
         log.debug("broadcast_now_playing: sent to %d client(s)", n)
+
+
+async def _close_quietly(ws: WebSocket) -> None:
+    try:
+        await asyncio.wait_for(ws.close(), BROADCAST_SEND_TIMEOUT)
+    except Exception:
+        pass
+
+
+def _media_item_url(
+    service_type: str, app_url: str, server_id: str, item_id: str
+) -> str:
+    """Deep link to an item in the server's own web client.
+
+    The two clients route differently: Emby keeps the hash-bang and an item
+    page (`#!/item?id=…&serverId=…`), while Jellyfin's web client dropped the
+    bang and calls the page details (`#/details?id=…&serverId=…`; 10.8 and
+    earlier accepted the bang as well). serverId is what lets the client pick
+    the right server when it knows several.
+    """
+    base = (app_url or "").rstrip("/")
+    if not base or not server_id or not item_id:
+        return ""
+    if service_type == "jellyfin":
+        return f"{base}/web/index.html#/details?id={item_id}&serverId={server_id}"
+    return f"{base}/web/index.html#!/item?id={item_id}&serverId={server_id}"
 
 
 def _normalize_session(
@@ -66,8 +109,10 @@ def _normalize_session(
     instance_label: str,
     app_url: str,
     server_id: str,
+    service_type: str = "emby",
 ) -> dict | None:
-    """Convert an Emby session dict to a normalized now-playing item. Returns None if nothing is playing."""
+    """Convert an Emby or Jellyfin session dict to a normalized now-playing item.
+    Returns None if nothing is playing."""
     now = s.get("NowPlayingItem")
     if not now or not isinstance(now, dict):
         return None
@@ -84,20 +129,14 @@ def _normalize_session(
         else (play_method_raw or "")
     )
     item_id_str = str(item_id) if item_id is not None else ""
-    _base = (app_url or "").rstrip("/")
-    item_url = (
-        f"{_base}/web/index.html#!/item?id={item_id_str}&serverId={server_id}"
-        if _base and server_id and item_id_str
-        else ""
-    )
     return {
         "session_id": f"{instance_id}:{s.get('Id') or ''}",
         "instance_id": instance_id,
         "instance_label": instance_label,
-        "service_type": "emby",
+        "service_type": service_type,
         "app_url": app_url,
         "server_id": server_id,
-        "item_url": item_url,
+        "item_url": _media_item_url(service_type, app_url, server_id, item_id_str),
         "user_id": str(s.get("UserId") or ""),
         "user_name": (s.get("UserName") or "").strip(),
         "device_name": (s.get("DeviceName") or "").strip(),
@@ -232,18 +271,21 @@ async def refresh_now_playing_state(instance_ids: list[int] | None = None) -> di
 
     items = []
 
-    for (inst, _cfg), sessions in zip(emby_jellyfin, emby_sessions_list):
+    for (inst, cfg), sessions in zip(emby_jellyfin, emby_sessions_list):
         instance_id = inst["id"]
         instance_label = (inst.get("label") or str(instance_id)).strip() or str(
             instance_id
         )
         app_url = (inst.get("app_url") or "").strip()
         server_id = (inst.get("media_server_id") or "").strip()
+        if sessions is None:
+            # Did not answer this tick; nothing is known to have stopped.
+            continue
         for s in sessions:
             if not isinstance(s, dict):
                 continue
             item = _normalize_session(
-                s, instance_id, instance_label, app_url, server_id
+                s, instance_id, instance_label, app_url, server_id, cfg[0]
             )
             if item is not None:
                 items.append(item)
@@ -274,7 +316,7 @@ async def refresh_now_playing_state(instance_ids: list[int] | None = None) -> di
             log.warning("Plex playback session poll instance_id=%s: %s", instance_id, e)
 
     global _last_plex_snapshot_rebuild
-    if plex_instances:
+    if plex_instances and not _plex_snapshot_rebuild_running:
         now_mono = time.monotonic()
         if (
             now_mono - _last_plex_snapshot_rebuild
@@ -283,15 +325,27 @@ async def refresh_now_playing_state(instance_ids: list[int] | None = None) -> di
             # Stamped before the work, not after: advancing only on success
             # meant a rebuild that keeps failing ran again on every poll, every
             # cache miss and every socket connect — the heaviest query in the
-            # app, in the request path, at 10s intervals.
+            # app, in the request path, at 10s intervals. Spawned rather than
+            # awaited for the same reason: inline, a slow rebuild stalled the
+            # broadcast it ran inside of.
             _last_plex_snapshot_rebuild = now_mono
-            try:
-                await store_plex_dashboard_metrics.rebuild_snapshots()
-                await brein_cache.clear_media_metrics_cache()
-            except Exception as e:
-                log.warning("Plex dashboard snapshot rebuild failed: %s", e)
+            background.spawn(_rebuild_plex_snapshots(), "plex_snapshot_rebuild")
 
     return {"items": items}
+
+
+async def _rebuild_plex_snapshots() -> None:
+    global _plex_snapshot_rebuild_running
+    _plex_snapshot_rebuild_running = True
+    try:
+        # Incremental: only the days the sessions finalised since the last
+        # pass can have changed; a pass with nothing finalised is a no-op.
+        await store_plex_dashboard_metrics.refresh_snapshots()
+        await brein_cache.clear_media_metrics_cache()
+    except Exception as e:
+        log.warning("Plex dashboard snapshot rebuild failed: %s", e)
+    finally:
+        _plex_snapshot_rebuild_running = False
 
 
 async def refresh_and_cache_now_playing() -> None:
@@ -320,15 +374,25 @@ async def _get_now_playing_cached(
 
 
 def _parse_instance_ids_query(raw: list[str] | None) -> list[int] | None:
-    """Parse query param list of instance IDs (e.g. '1,2' or repeated ?instance_id=1&instance_id=2) to list[int]."""
+    """Parse query param list of instance IDs (e.g. '1,2' or repeated ?instance_id=1&instance_id=2) to list[int].
+
+    Anything that is not an integer is refused rather than skipped: a
+    filter that silently parsed to nothing meant "every instance".
+    """
     if not raw:
         return None
     parsed: list[int] = []
-    for x in raw:
-        try:
-            parsed.append(int(str(x).strip()))
-        except ValueError:
-            continue
+    for value in raw:
+        for part in str(value).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                parsed.append(int(part))
+            except ValueError:
+                raise HTTPException(
+                    status_code=400, detail="instance_id must be an integer."
+                ) from None
     return parsed if parsed else None
 
 
@@ -350,11 +414,38 @@ async def api_now_playing(
     return data
 
 
+def _origin_allowed(websocket: WebSocket) -> bool:
+    """Same-site check on the upgrade request.
+
+    The session cookie rides along on a WebSocket upgrade from any page, so
+    a page on another site could open this feed as the signed-in user. A
+    browser always sends Origin on an upgrade and never lets a page set it,
+    so its host is held against the host the request arrived for: the Host
+    header, or X-Forwarded-Host where a proxy — the frontend's rewrite
+    included — replaced Host with its upstream target. Hostnames only, as a
+    proxy may well rewrite the port. No Origin at all is a non-browser
+    client, which the cookie threat does not reach.
+    """
+    origin = websocket.headers.get("origin")
+    if origin is None:
+        return True
+    origin_host = (urlsplit(origin).hostname or "").lower()
+    if not origin_host:
+        return False
+    for header in ("host", "x-forwarded-host"):
+        # X-Forwarded-Host may list one value per proxy hop.
+        for value in websocket.headers.get(header, "").split(","):
+            host = (urlsplit(f"//{value.strip()}").hostname or "").lower()
+            if host and host == origin_host:
+                return True
+    return False
+
+
 @router.websocket("/ws/now-playing")
 async def websocket_now_playing(websocket: WebSocket) -> None:
     """WebSocket for now-playing updates. Requires JSON first message with token. Sends initial snapshot then server pushes updates via broadcast."""
 
-    if len(_ws_connections) >= WS_MAX_CONNECTIONS:
+    if len(_ws_connections) >= WS_MAX_CONNECTIONS or not _origin_allowed(websocket):
         await websocket.close(code=1008)
         return
     await websocket.accept()
@@ -388,7 +479,9 @@ async def websocket_now_playing(websocket: WebSocket) -> None:
         while True:
             try:
                 await websocket.receive_text()
-            except WebSocketDisconnect:
+            except (WebSocketDisconnect, RuntimeError):
+                # RuntimeError: the broadcast closed this socket after a send
+                # timed out, and receive_text() refuses a closed socket.
                 break
     finally:
         _ws_connections.discard(websocket)

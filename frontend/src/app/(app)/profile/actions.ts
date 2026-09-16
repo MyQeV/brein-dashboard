@@ -1,25 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { ApiError, apiFetch, isRedirectError } from "@/lib/api";
+import { type ActionResult, toResult } from "@/lib/actions";
+import { apiFetch } from "@/lib/api";
 import type { User } from "@/lib/types";
-
-/**
- * Actions return a result envelope and never throw. A thrown server action
- * surfaces as an error boundary, which loses the form the user was filling in
- * along with everything they typed.
- */
-export type ActionResult = { ok: true } | { ok: false; error: string; status?: number };
-
-function toResult(error: unknown): ActionResult {
-  // redirect() signals by throwing; swallowing it would strand a signed-out
-  // user on the form instead of sending them to login.
-  if (isRedirectError(error)) throw error;
-  if (error instanceof ApiError) {
-    return { ok: false, error: error.message, status: error.status };
-  }
-  return { ok: false, error: "Something went wrong. Please try again." };
-}
 
 export async function saveProfile(input: {
   email: string;

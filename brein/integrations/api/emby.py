@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Any, Callable
 from urllib.parse import quote, urljoin
 
@@ -12,21 +13,26 @@ from websockets.exceptions import ConnectionClosed
 
 from brein.integrations.api.base import (
     DEFAULT_HTTP_TIMEOUT,
-    new_http_client,
+    _is_ssrf_risk_url,
+    get_http_client,
+    normalize_base_url,
+    redirect_message,
 )
 
 log = logging.getLogger(__name__)
 
 
 def _normalize_base_url(base_url: str) -> str | None:
-    """Strip and validate base_url; return cleaned URL or None if invalid."""
-    base = (base_url or "").strip().rstrip("/")
+    """normalize_base_url, plus the scheme check; None if invalid."""
+    base = normalize_base_url(base_url)
     if not base.startswith(("http://", "https://")):
         return None
     return base
 
 
-_CLIENT_IDENTITY = 'MediaBrowser Client="Brein", Device="Brein", DeviceId="brein", Version="1"'
+_CLIENT_IDENTITY = (
+    'MediaBrowser Client="Brein", Device="Brein", DeviceId="brein", Version="1"'
+)
 
 
 def _auth_headers(api_key: str) -> dict[str, str]:
@@ -47,6 +53,10 @@ def _auth_headers(api_key: str) -> dict[str, str]:
     }
 
 
+# A WebSocket connection that lasted at least this long counts as healthy, so
+# the next failure starts from a one-second backoff again.
+STABLE_CONNECTION_SECONDS = 60.0
+
 # Message types from Emby WebSocket that indicate playback/session changes.
 EMBY_WS_PLAYBACK_MESSAGE_TYPES = frozenset({"UserDataChanged", "Playstate", "Play"})
 # Message types that indicate user account changes (trigger users sync).
@@ -61,13 +71,16 @@ async def test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
     url = urljoin(base + "/", "System/Info")
     headers = _auth_headers(api_key)
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code == 401:
-                return False, "Invalid API key"
-            if r.status_code >= 400:
-                return False, f"HTTP {r.status_code}"
-            return True, "OK"
+        r = await get_http_client().get(
+            url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if 300 <= r.status_code < 400:
+            return False, redirect_message(r)
+        if r.status_code == 401:
+            return False, "Invalid API key"
+        if r.status_code != 200:
+            return False, f"HTTP {r.status_code}"
+        return True, "OK"
     except httpx.ConnectError as e:
         log.warning("Connection error to %s: %s", url, e)
         return False, f"Connection failed: {e!s}"
@@ -86,11 +99,12 @@ async def get_system_info(base_url: str, api_key: str) -> tuple[bool, dict | Non
     url = urljoin(base + "/", "System/Info")
     headers = _auth_headers(api_key)
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code != 200:
-                return False, None
-            return True, r.json()
+        r = await get_http_client().get(
+            url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code != 200:
+            return False, None
+        return True, r.json()
     except Exception as e:
         log.warning("get_system_info error to %s: %s", url, e)
         return False, None
@@ -106,12 +120,13 @@ async def get_system_info_public(
     url = urljoin(base + "/", "System/Info/Public")
     headers = _auth_headers(api_key)
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code != 200:
-                return False, None
-            data = r.json()
-            return (True, data) if isinstance(data, dict) else (False, None)
+        r = await get_http_client().get(
+            url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code != 200:
+            return False, None
+        data = r.json()
+        return (True, data) if isinstance(data, dict) else (False, None)
     except Exception as e:
         log.warning("get_system_info_public error to %s: %s", url, e)
         return False, None
@@ -125,13 +140,14 @@ async def post_system_restart(base_url: str, api_key: str) -> tuple[bool, str]:
     url = urljoin(base + "/", "System/Restart")
     headers = _auth_headers(api_key)
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.post(url, headers=headers)
-            if r.status_code == 401:
-                return False, "Invalid API key"
-            if r.status_code >= 400:
-                return False, f"HTTP {r.status_code}"
-            return True, "OK"
+        r = await get_http_client().post(
+            url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code == 401:
+            return False, "Invalid API key"
+        if r.status_code >= 400:
+            return False, f"HTTP {r.status_code}"
+        return True, "OK"
     except httpx.ConnectError as e:
         log.warning("Connection error to %s: %s", url, e)
         return False, f"Connection failed: {e!s}"
@@ -150,12 +166,13 @@ async def get_users(base_url: str, api_key: str) -> tuple[bool, list | None]:
     url = urljoin(base + "/", "Users/Query")
     headers = _auth_headers(api_key)
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code != 200:
-                return False, None
-            data = r.json()
-            return True, data.get("Items") if isinstance(data, dict) else None
+        r = await get_http_client().get(
+            url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code != 200:
+            return False, None
+        data = r.json()
+        return True, data.get("Items") if isinstance(data, dict) else None
     except Exception as e:
         log.warning("get_users error %s: %s", url, e)
         return False, None
@@ -178,11 +195,12 @@ async def authenticate_user(
     }
     payload = {"Username": username, "Pw": password}
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.post(url, headers=headers, json=payload)
-            if r.status_code != 200:
-                return False, None
-            return True, r.json()
+        r = await get_http_client().post(
+            url, headers=headers, json=payload, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code != 200:
+            return False, None
+        return True, r.json()
     except Exception as e:
         log.warning("authenticate_user error %s: %s", url, e)
         return False, None
@@ -201,15 +219,14 @@ async def get_activity_log_entries(
     )
     headers = _auth_headers(api_key)
     try:
-        async with new_http_client(15.0) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code != 200:
-                return False, []
-            data = r.json()
-            if not isinstance(data, dict):
-                return True, []
-            items = data.get("Items")
-            return True, items if isinstance(items, list) else []
+        r = await get_http_client().get(url, headers=headers, timeout=15.0)
+        if r.status_code != 200:
+            return False, []
+        data = r.json()
+        if not isinstance(data, dict):
+            return True, []
+        items = data.get("Items")
+        return True, items if isinstance(items, list) else []
     except Exception as e:
         log.warning("get_activity_log_entries error %s: %s", url, e)
         return False, []
@@ -234,17 +251,18 @@ async def get_items_by_ids(
     headers = _auth_headers(api_key)
     params = {"Ids": ",".join(ids)}
     try:
-        async with new_http_client(30.0) as client:
-            r = await client.get(url, headers=headers, params=params)
-            if r.status_code != 200:
-                return False, []
-            data = r.json()
-            if not isinstance(data, dict):
-                return False, []
-            items = data.get("Items")
-            if not items or not isinstance(items, list):
-                return True, []
-            return True, [i for i in items if isinstance(i, dict)]
+        r = await get_http_client().get(
+            url, headers=headers, params=params, timeout=30.0
+        )
+        if r.status_code != 200:
+            return False, []
+        data = r.json()
+        if not isinstance(data, dict):
+            return False, []
+        items = data.get("Items")
+        if not items or not isinstance(items, list):
+            return True, []
+        return True, [i for i in items if isinstance(i, dict)]
     except Exception as e:
         log.warning("get_items_by_ids error %s: %s", url, e)
         return False, []
@@ -283,36 +301,36 @@ async def get_items_by_type(
     collected: list[dict[str, Any]] = []
     start_index = 0
     try:
-        async with new_http_client(60.0) as client:
-            for _ in range(ITEMS_MAX_PAGES):
-                params = {
-                    "Recursive": "true",
-                    "IncludeItemTypes": item_type,
-                    "StartIndex": str(start_index),
-                    "Limit": str(ITEMS_PAGE_SIZE),
-                }
-                r = await client.get(url, headers=headers, params=params)
-                if r.status_code != 200:
-                    return False, []
-                data = r.json()
-                if not isinstance(data, dict):
-                    return False, []
-                items = data.get("Items")
-                if not items or not isinstance(items, list):
-                    break
-                collected.extend(i for i in items if isinstance(i, dict))
-                if len(items) < ITEMS_PAGE_SIZE:
-                    break
-                total = data.get("TotalRecordCount")
-                if isinstance(total, int) and len(collected) >= total:
-                    break
-                start_index += ITEMS_PAGE_SIZE
-            else:
-                log.warning(
-                    "get_items_by_type(%s): stopped after %d pages",
-                    item_type,
-                    ITEMS_MAX_PAGES,
-                )
+        client = get_http_client()
+        for _ in range(ITEMS_MAX_PAGES):
+            params = {
+                "Recursive": "true",
+                "IncludeItemTypes": item_type,
+                "StartIndex": str(start_index),
+                "Limit": str(ITEMS_PAGE_SIZE),
+            }
+            r = await client.get(url, headers=headers, params=params, timeout=60.0)
+            if r.status_code != 200:
+                return False, []
+            data = r.json()
+            if not isinstance(data, dict):
+                return False, []
+            items = data.get("Items")
+            if not items or not isinstance(items, list):
+                break
+            collected.extend(i for i in items if isinstance(i, dict))
+            if len(items) < ITEMS_PAGE_SIZE:
+                break
+            total = data.get("TotalRecordCount")
+            if isinstance(total, int) and len(collected) >= total:
+                break
+            start_index += ITEMS_PAGE_SIZE
+        else:
+            log.warning(
+                "get_items_by_type(%s): stopped after %d pages",
+                item_type,
+                ITEMS_MAX_PAGES,
+            )
         return True, collected
     except Exception as e:
         log.warning("get_items_by_type(%s) error %s: %s", item_type, url, e)
@@ -321,12 +339,18 @@ async def get_items_by_type(
 
 async def get_sessions(
     base_url: str, api_key: str, active_within_seconds: int | None = 30
-) -> list:
-    """GET /Sessions; return list of active session objects (empty list on error).
-    When active_within_seconds is set, only sessions active within that many seconds are returned (smaller payload)."""
+) -> list | None:
+    """GET /Sessions; the active session objects, or None on failure.
+
+    `[]` means the server answered and nothing is playing; None means it did
+    not answer, and the caller has to leave the instance alone for that tick
+    rather than show it idle (the same split plex.get_sessions makes).
+    When active_within_seconds is set, only sessions active within that many
+    seconds are returned (smaller payload).
+    """
     base = _normalize_base_url(base_url)
     if not base:
-        return []
+        return None
     url = urljoin(base + "/", "Sessions")
     headers = _auth_headers(api_key)
     params = (
@@ -335,15 +359,17 @@ async def get_sessions(
         else {}
     )
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.get(url, headers=headers, params=params)
-            if r.status_code != 200:
-                return []
-            data = r.json()
-            return data if isinstance(data, list) else []
+        r = await get_http_client().get(
+            url, headers=headers, params=params, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code != 200:
+            log.warning("get_sessions HTTP %s from %s", r.status_code, base)
+            return None
+        data = r.json()
+        return data if isinstance(data, list) else None
     except Exception as e:
         log.warning("get_sessions error %s: %s", url, e)
-        return []
+        return None
 
 
 def emby_websocket_url(base_url: str, api_key: str, device_id: str = "brein") -> str:
@@ -441,14 +467,20 @@ async def run_emby_websocket_listener(
     if not url:
         log.warning("Emby WebSocket: invalid base_url %s", base_url)
         return
+    # websockets.connect does not go through the httpx client, so the SSRF
+    # hook attached there never sees this connection.
+    if await _is_ssrf_risk_url(base_url):
+        log.warning("Emby WebSocket: blocked base_url %s", base_url)
+        return
     backoff = 1.0
     max_backoff = 60.0
+    connected_at = 0.0
     while True:
         try:
             async with websockets.connect(
                 url, ping_interval=30, ping_timeout=10, close_timeout=5
             ) as ws:
-                backoff = 1.0
+                connected_at = time.monotonic()
                 log.info("Emby WebSocket connected to %s", base_url)
                 while True:
                     raw = await ws.recv()
@@ -464,6 +496,17 @@ async def run_emby_websocket_listener(
             raise
         except Exception as e:
             log.warning("Emby WebSocket error %s: %s", base_url, e)
+
+        # Reset only after the connection proved itself. Resetting on connect
+        # meant a server that accepted the upgrade and dropped the socket at
+        # once reconnected every second forever. Same logic as the Plex
+        # listener, which explains why it sits on the failure path.
+        if (
+            connected_at
+            and time.monotonic() - connected_at >= STABLE_CONNECTION_SECONDS
+        ):
+            backoff = 1.0
+        connected_at = 0.0
         try:
             await asyncio.sleep(backoff)
         except asyncio.CancelledError:
@@ -479,11 +522,12 @@ async def _get_library_media_folders(base_url: str, api_key: str) -> list:
     url = urljoin(base + "/", "Library/MediaFolders")
     headers = _auth_headers(api_key)
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code != 200:
-                return []
-            data = r.json()
+        r = await get_http_client().get(
+            url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
         items = data.get("Items") if isinstance(data, dict) else []
         out = []
         for it in items or []:
@@ -531,11 +575,12 @@ async def get_media_folders(base_url: str, api_key: str) -> tuple[bool, list | N
     # 2) Library/SelectableMediaFolders (folders + subfolders)
     url = urljoin(base + "/", "Library/SelectableMediaFolders")
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code != 200:
-                return (True, out) if out else (False, None)
-            data = r.json()
+        r = await get_http_client().get(
+            url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code != 200:
+            return (True, out) if out else (False, None)
+        data = r.json()
         if isinstance(data, list):
             folders = data
         elif isinstance(data, dict) and "Items" in data:
@@ -581,18 +626,22 @@ async def get_media_folders(base_url: str, api_key: str) -> tuple[bool, list | N
 async def get_user_by_id(
     base_url: str, api_key: str, user_id: str
 ) -> tuple[bool, dict | None]:
-    """GET /Users/{Id}; return (True, user_dto) or (False, None)."""
+    """GET /Users/{Id}; (True, user_dto) on 200, (True, None) when the server
+    answered 404, (False, None) when it did not answer."""
     base = _normalize_base_url(base_url)
     if not base:
         return False, None
     url = urljoin(base + "/", f"Users/{user_id}")
     headers = _auth_headers(api_key)
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code != 200:
-                return False, None
-            return True, r.json()
+        r = await get_http_client().get(
+            url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code == 404:
+            return True, None
+        if r.status_code != 200:
+            return False, None
+        return True, r.json()
     except Exception as e:
         log.warning("get_user_by_id error %s: %s", url, e)
         return False, None
@@ -664,18 +713,19 @@ async def update_user_policy(
     url = urljoin(base + "/", f"Users/{user_id}/Policy")
     headers = {**_auth_headers(api_key), "Content-Type": "application/json"}
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.post(url, headers=headers, json=policy)
-            if r.status_code >= 400:
-                log.warning(
-                    "update_user_policy HTTP %s url=%s body=%s",
-                    r.status_code,
-                    url,
-                    r.text[:500],
-                )
-                return False, f"HTTP {r.status_code}"
-            log.debug("update_user_policy %s status %s", url, r.status_code)
-            return True, "OK"
+        r = await get_http_client().post(
+            url, headers=headers, json=policy, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code >= 400:
+            log.warning(
+                "update_user_policy HTTP %s url=%s body=%s",
+                r.status_code,
+                url,
+                r.text[:500],
+            )
+            return False, f"HTTP {r.status_code}"
+        log.debug("update_user_policy %s status %s", url, r.status_code)
+        return True, "OK"
     except Exception as e:
         log.warning("update_user_policy error %s: %s", url, e)
         return False, str(e)
@@ -697,11 +747,12 @@ async def update_user(
     url = urljoin(base + "/", f"Users/{user_id}")
     headers = {**_auth_headers(api_key), "Content-Type": "application/json"}
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.post(url, headers=headers, json=user)
-            if r.status_code >= 400:
-                return False, f"HTTP {r.status_code}"
-            return True, "OK"
+        r = await get_http_client().post(
+            url, headers=headers, json=user, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code >= 400:
+            return False, f"HTTP {r.status_code}"
+        return True, "OK"
     except Exception as e:
         log.warning("update_user error %s: %s", url, e)
         return False, str(e)
@@ -718,12 +769,13 @@ async def update_user_password(
     headers = {**_auth_headers(api_key), "Content-Type": "application/json"}
     payload = {"NewPw": new_password}
     try:
-        async with new_http_client(DEFAULT_HTTP_TIMEOUT) as client:
-            r = await client.post(url, headers=headers, json=payload)
-            if r.status_code >= 400:
-                detail = r.text[:300].strip() if r.text else ""
-                return False, detail or f"HTTP {r.status_code}"
-            return True, "OK"
+        r = await get_http_client().post(
+            url, headers=headers, json=payload, timeout=DEFAULT_HTTP_TIMEOUT
+        )
+        if r.status_code >= 400:
+            detail = r.text[:300].strip() if r.text else ""
+            return False, detail or f"HTTP {r.status_code}"
+        return True, "OK"
     except Exception as e:
         log.warning("update_user_password error %s: %s", url, e)
         return False, str(e)

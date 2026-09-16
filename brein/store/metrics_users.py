@@ -7,11 +7,40 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from brein.config import TIMEZONE
 from brein.store.metrics_helpers import (
+    _UTC_TEXT_WINDOW,
     _date_range_where,
     _instance_filter,
     _local_date_expr,
     _user_instance_filter,
+    _utc_window_params,
 )
+
+
+def _session_user_id(user_id: str) -> int | None:
+    """emby_playback_sessions.user_id is an integer; bind it as one.
+
+    Comparing CAST(s.user_id AS TEXT) to the string made the column's index
+    unusable, so each per-user query scanned the instance's sessions. A
+    value that is not a number matches no session, and the callers return
+    nothing for it rather than raise.
+    """
+    try:
+        return int(str(user_id).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _user_window_params(
+    instance_id: int, user_id: int, start_date: str, end_date: str
+) -> dict[str, Any]:
+    return {
+        "instance_id": instance_id,
+        "user_id": user_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        **_utc_window_params(start_date, end_date),
+        "tz": TIMEZONE,
+    }
 
 
 async def get_user_daily_watch_time(
@@ -96,6 +125,9 @@ async def get_user_top_items(
     limit: int = 5,
 ) -> list[dict[str, Any]]:
     """Top series or movies for a user by total watch time in the date range."""
+    uid = _session_user_id(user_id)
+    if uid is None:
+        return []
     ld = _local_date_expr("s.start_time")
     if kind == "series":
         query = f"""
@@ -111,9 +143,10 @@ async def get_user_top_items(
               ON parent.instance_id = i.instance_id
               AND parent.item_id = i.series_id
             WHERE s.instance_id = :instance_id
-              AND CAST(s.user_id AS TEXT) = :user_id
+              AND s.user_id = :user_id
               AND i.series_id IS NOT NULL
               AND {ld} BETWEEN :start_date AND :end_date
+              {_UTC_TEXT_WINDOW}
             GROUP BY i.series_id
             ORDER BY total_seconds DESC
             LIMIT :limit
@@ -129,9 +162,10 @@ async def get_user_top_items(
               ON i.instance_id = s.instance_id
               AND i.item_id = CAST(s.item_id AS TEXT)
             WHERE s.instance_id = :instance_id
-              AND CAST(s.user_id AS TEXT) = :user_id
+              AND s.user_id = :user_id
               AND i.type = 'Movie'
               AND {ld} BETWEEN :start_date AND :end_date
+              {_UTC_TEXT_WINDOW}
             GROUP BY i.item_id
             ORDER BY total_seconds DESC
             LIMIT :limit
@@ -139,12 +173,8 @@ async def get_user_top_items(
     result = await session.execute(
         text(query),
         {
-            "instance_id": instance_id,
-            "user_id": str(user_id),
-            "start_date": start_date,
-            "end_date": end_date,
+            **_user_window_params(instance_id, uid, start_date, end_date),
             "limit": int(limit),
-            "tz": TIMEZONE,
         },
     )
     return [
@@ -166,6 +196,9 @@ async def get_user_watch_time_by_type(
     end_date: str,
 ) -> list[dict[str, Any]]:
     """Watch time grouped by item type (Movie / Episode / etc.) for a user."""
+    uid = _session_user_id(user_id)
+    if uid is None:
+        return []
     ld = _local_date_expr("s.start_time")
     result = await session.execute(
         text(
@@ -178,19 +211,14 @@ async def get_user_watch_time_by_type(
               ON i.instance_id = s.instance_id
               AND i.item_id = CAST(s.item_id AS TEXT)
             WHERE s.instance_id = :instance_id
-              AND CAST(s.user_id AS TEXT) = :user_id
+              AND s.user_id = :user_id
               AND {ld} BETWEEN :start_date AND :end_date
+              {_UTC_TEXT_WINDOW}
             GROUP BY i.type
             ORDER BY total_seconds DESC
             """
         ),
-        {
-            "instance_id": instance_id,
-            "user_id": str(user_id),
-            "start_date": start_date,
-            "end_date": end_date,
-            "tz": TIMEZONE,
-        },
+        _user_window_params(instance_id, uid, start_date, end_date),
     )
     return [
         {
@@ -210,6 +238,9 @@ async def get_user_longest_session(
     end_date: str,
 ) -> dict[str, Any] | None:
     """Single longest playback session for the user in the date range."""
+    uid = _session_user_id(user_id)
+    if uid is None:
+        return None
     ld = _local_date_expr("s.start_time")
     result = await session.execute(
         text(
@@ -223,19 +254,14 @@ async def get_user_longest_session(
               ON i.instance_id = s.instance_id
               AND i.item_id = CAST(s.item_id AS TEXT)
             WHERE s.instance_id = :instance_id
-              AND CAST(s.user_id AS TEXT) = :user_id
+              AND s.user_id = :user_id
               AND {ld} BETWEEN :start_date AND :end_date
+              {_UTC_TEXT_WINDOW}
             ORDER BY s.duration_seconds DESC
             LIMIT 1
             """
         ),
-        {
-            "instance_id": instance_id,
-            "user_id": str(user_id),
-            "start_date": start_date,
-            "end_date": end_date,
-            "tz": TIMEZONE,
-        },
+        _user_window_params(instance_id, uid, start_date, end_date),
     )
     row = result.mappings().fetchone()
     if not row:
@@ -257,6 +283,9 @@ async def get_user_top_weekday(
 ) -> dict[str, Any] | None:
     """Weekday with the highest average daily watch time (averaged over watched
     days only). PG DOW: 0=Sun..6=Sat."""
+    uid = _session_user_id(user_id)
+    if uid is None:
+        return None
     ld = _local_date_expr("s.start_time")
     result = await session.execute(
         text(
@@ -270,8 +299,9 @@ async def get_user_top_weekday(
                        SUM(s.duration_seconds) AS day_total
                 FROM emby_playback_sessions s
                 WHERE s.instance_id = :instance_id
-                  AND CAST(s.user_id AS TEXT) = :user_id
+                  AND s.user_id = :user_id
                   AND {ld} BETWEEN :start_date AND :end_date
+                  {_UTC_TEXT_WINDOW}
                 GROUP BY local_date, dow
             )
             SELECT dow,
@@ -284,13 +314,7 @@ async def get_user_top_weekday(
             LIMIT 1
             """
         ),
-        {
-            "instance_id": instance_id,
-            "user_id": str(user_id),
-            "start_date": start_date,
-            "end_date": end_date,
-            "tz": TIMEZONE,
-        },
+        _user_window_params(instance_id, uid, start_date, end_date),
     )
     row = result.mappings().fetchone()
     if not row:

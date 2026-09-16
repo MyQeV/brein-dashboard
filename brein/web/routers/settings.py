@@ -5,7 +5,7 @@ import re
 from typing import Annotated
 
 import anyio.to_thread
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from brein import logging_setup as _logging_setup
@@ -120,12 +120,11 @@ async def list_log_files(_user: CurrentUserCookieOrBearer) -> dict:
 async def view_log(
     _user: CurrentUserCookieOrBearer,
     file: str | None = None,
-    lines: int = 200,
+    lines: int = Query(200, ge=1, le=500),
     level: str | None = None,
     search: str | None = None,
 ) -> dict:
     """Return last N lines of a log file, with optional level/search filter (admin only)."""
-    lines = min(lines, 500)
     try:
         path = _safe_log_path(file)
     except ValueError as e:

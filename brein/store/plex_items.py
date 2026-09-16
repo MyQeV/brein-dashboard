@@ -9,6 +9,23 @@ from brein.integrations.api.plex import rating_key_from_plex_metadata_dict
 
 NAME_MAX_LEN = 512
 
+# Only rows whose metadata actually changed are written: the hourly sync
+# re-sends the whole library, and rewriting every row bumped updated_at on
+# all of them — so it said when the library was last walked, not when the
+# item last changed — and left a full table's worth of dead tuples an hour.
+_UPSERT_IF_CHANGED = (
+    " WHERE (plex_items.type, plex_items.name, plex_items.server_id,"
+    "  plex_items.series_id, plex_items.season_id, plex_items.parent_id,"
+    "  plex_items.run_time_ticks, plex_items.index_number,"
+    "  plex_items.parent_index_number, plex_items.library_section_id,"
+    "  plex_items.guid)"
+    " IS DISTINCT FROM"
+    " (EXCLUDED.type, EXCLUDED.name, EXCLUDED.server_id, EXCLUDED.series_id,"
+    "  EXCLUDED.season_id, EXCLUDED.parent_id, EXCLUDED.run_time_ticks,"
+    "  EXCLUDED.index_number, EXCLUDED.parent_index_number,"
+    "  EXCLUDED.library_section_id, EXCLUDED.guid)"
+)
+
 
 def _optional_str_id(v: Any) -> str | None:
     if v is None:
@@ -123,7 +140,7 @@ async def upsert_items_bulk(
                 "  parent_index_number = EXCLUDED.parent_index_number,"
                 "  updated_at = EXCLUDED.updated_at,"
                 "  library_section_id = EXCLUDED.library_section_id,"
-                "  guid = EXCLUDED.guid"
+                "  guid = EXCLUDED.guid" + _UPSERT_IF_CHANGED
             ),
             rows,
         )

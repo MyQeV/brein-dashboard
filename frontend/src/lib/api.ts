@@ -1,4 +1,4 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 /** Server-side API access. Browser code must use `clientFetch` instead. */
@@ -7,6 +7,13 @@ const API_ORIGIN = process.env.BREIN_API_ORIGIN ?? "http://localhost:8001";
 
 const CSRF_COOKIE = "brein_csrf";
 const CSRF_HEADER = "X-CSRF-Token";
+
+/**
+ * The path and query being rendered, set by proxy.ts on every page request.
+ * A server component cannot otherwise see its own URL, and the login page
+ * needs it to send the user back after a session is restored.
+ */
+export const PATH_HEADER = "x-brein-path";
 
 /**
  * True for the sentinel `redirect()` throws. Catching it and reporting it as
@@ -86,7 +93,10 @@ export async function apiFetch<T>(
   });
 
   if (response.status === 401 && !allowUnauthenticated) {
-    redirect("/login");
+    // With the destination, or the login page's refresh lands on "/" and
+    // the filters and page the user had are gone.
+    const next = (await headers()).get(PATH_HEADER);
+    redirect(next ? `/login?next=${encodeURIComponent(next)}` : "/login");
   }
   if (!response.ok) {
     throw new ApiError(await detailOf(response), response.status);

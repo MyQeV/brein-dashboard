@@ -5,6 +5,7 @@ import { ApiNotice } from "@/components/ui/notice";
 import { softApiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { buildQuery, firstParam } from "@/lib/params";
+import { appTimeZone } from "@/lib/timezone";
 import type { ActivityEntry, ActivityResponse } from "@/lib/types";
 import { ActivityFilters } from "./activity-filters";
 
@@ -69,7 +70,7 @@ export default async function ActivityLogPage(
             {
               key: "date",
               header: "When",
-              render: (row) => formatDateTime(row.date),
+              render: (row) => formatDateTime(row.date, appTimeZone()),
             },
             { key: "type", header: "Type" },
             { key: "name", header: "Event" },

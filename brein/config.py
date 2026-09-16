@@ -64,6 +64,8 @@ FORCE_HTTPS: bool = os.environ.get("BREIN_FORCE_HTTPS", "").strip().lower() in (
     "true",
     "yes",
 )
+# Dev mode: uvicorn --reload in main.py, and the interactive API docs.
+DEV: bool = os.environ.get("BREIN_DEV", "").strip().lower() in ("1", "true", "yes")
 # Comma-separated IPs/CIDRs of trusted reverse proxies (e.g. "172.18.0.1" or "172.0.0.0/8").
 # When set, rate limiting reads the real client IP from X-Forwarded-For instead of the proxy IP.
 # Default empty = no proxy trust (uses TCP peer IP directly — safe default).

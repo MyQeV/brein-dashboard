@@ -5,8 +5,9 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
+import type { ActionResult } from "@/lib/actions";
 import type { MediaLibrary, MediaUser } from "@/lib/types";
-import { type ActionResult, type UserEdit, updateMediaUser } from "./actions";
+import { type UserEdit, updateMediaUser } from "./actions";
 
 /** A labelled checkbox, the shape this form needs a dozen times. */
 function Check({

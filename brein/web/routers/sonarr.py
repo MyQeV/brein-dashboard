@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 from brein import cache as brein_cache
 from brein.integrations import sonarr as sonarr_integration
 from brein.web import auth as web_auth
+from brein.web.dependencies import require_instance_config
 from brein.web.schemas import User
-from brein.store import instances as store_instances
 
 router = APIRouter()
 CurrentUser = Annotated[User, Depends(web_auth.get_current_active_user)]
@@ -51,7 +51,6 @@ SONARR_ALLOWED_COMMANDS = frozenset(
         "RefreshSeries",
         "RenameFiles",
         "RenameSeries",
-        "ResetApiKey",
         "RescanSeries",
         "RssSync",
         "SeasonSearch",
@@ -94,25 +93,12 @@ class SonarrHostConfigPatch(BaseModel):
     sslPort: int | None = None
 
 
-async def _get_sonarr_config(instance_id: int):
-    """Resolve instance config; return (base_url, api_key) for Sonarr or raise for unsupported."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type != "sonarr":
-        raise HTTPException(status_code=400, detail="Not a Sonarr instance")
+async def _get_sonarr_config(instance_id: int) -> tuple[str, str]:
+    """Resolve instance config; return (base_url, api_key) for Sonarr or raise."""
+    _, base_url, api_key = await require_instance_config(
+        instance_id, "sonarr", detail="Not a Sonarr instance"
+    )
     return base_url, api_key
-
-
-def _sonarr_poster_path(img: dict) -> str | None:
-    """Extract poster path from a Sonarr image dict. Uses only local url (MediaCover), not remoteUrl."""
-    url = img.get("url") if isinstance(img.get("url"), str) else None
-    if url and url.startswith("/"):
-        return url
-    return None
 
 
 async def _enrich_sonarr_records_with_series(
@@ -123,7 +109,7 @@ async def _enrich_sonarr_records_with_series(
     series_id_key: str = "seriesId",
     fallback_id_key: str | None = None,
 ) -> None:
-    """Attach series {title, year, posterUrl} to each record. Modifies records in place."""
+    """Attach series {title, year} to each record. Modifies records in place."""
 
     def _sid(r: dict):
         v = r.get(series_id_key)
@@ -177,7 +163,7 @@ async def _enrich_sonarr_records_with_series(
 
 @router.get("/api/instances/{instance_id}/sonarr/queue")
 async def api_instance_sonarr_queue(instance_id: int, current_user: CurrentUser):
-    """Return Sonarr queue. 400 if not Sonarr. Enriched with series title, year, posterUrl."""
+    """Return Sonarr queue. 400 if not Sonarr. Enriched with series title and year."""
     base_url, api_key = await _get_sonarr_config(instance_id)
     ok, data = await sonarr_integration.get_queue(base_url, api_key)
     if not ok or data is None:
@@ -214,7 +200,7 @@ async def api_instance_sonarr_history(
     dateFrom: str = Query(""),
     dateTo: str = Query(""),
 ):
-    """Return Sonarr history with optional pagination and filters. 400 if not Sonarr. Enriched with series title, year, posterUrl."""
+    """Return Sonarr history with optional pagination and filters. 400 if not Sonarr. Enriched with series title and year."""
     base_url, api_key = await _get_sonarr_config(instance_id)
     ok, data = await sonarr_integration.get_history(
         base_url,
@@ -424,7 +410,7 @@ async def api_instance_sonarr_blocklist(
     page: int = Query(1, ge=1),
     pageSize: int = Query(50, ge=1, le=200),
 ):
-    """Return Sonarr blocklist. 400 if not Sonarr. Enriched with series title, year, posterUrl."""
+    """Return Sonarr blocklist. 400 if not Sonarr. Enriched with series title and year."""
     base_url, api_key = await _get_sonarr_config(instance_id)
     ok, data = await sonarr_integration.get_blocklist(
         base_url, api_key, page=page, page_size=pageSize

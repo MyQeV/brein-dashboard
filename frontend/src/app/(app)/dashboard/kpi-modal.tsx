@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   Chevron,
   ExpandRow,
@@ -15,10 +15,10 @@ import { BELOW_LG } from "@/lib/breakpoints";
 import { clientFetch } from "@/lib/client-fetch";
 import { cn } from "@/lib/cn";
 import { formatCount, formatDuration } from "@/lib/format";
+import { MODAL_LISTS_EXPANDED, useBooleanPreference } from "@/lib/preferences";
 import { rowNumber, rowText } from "@/lib/rows";
 import type { MediaMetrics } from "@/lib/types";
 import { useMediaQuery } from "@/lib/use-media-query";
-import { MODAL_LISTS_EXPANDED, useBooleanPreference } from "@/lib/use-preference";
 
 /**
  * Which headline number was clicked. Plays, watch time and active users are
@@ -76,8 +76,25 @@ export function KpiModal({
       return next;
     });
   }
+  // Keyed on the query as well as the user: the modal outlives a range
+  // change behind it (Back, say), and the rows cached for the old range must
+  // not be shown under the new heading.
   const [userSessions, setUserSessions] = useState<Record<string, Fetched>>({});
+  const cacheKey = (userKey: string) => `${query}|${userKey}`;
   const [allSessions, setAllSessions] = useState<Fetched>({ status: "loading" });
+
+  // One controller for the per-user requests, replaced with the query and
+  // aborted with it and on close. Not one per effect run: the effect fires
+  // again on every toggle, and cancelling there would restart the users
+  // still loading. Declared before the effect that reads it so the same
+  // commit sees the fresh one.
+  const userAbort = useRef<AbortController | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: replaced on a query change, not on anything read inside
+  useEffect(() => {
+    const controller = new AbortController();
+    userAbort.current = controller;
+    return () => controller.abort();
+  }, [query]);
 
   /** Plays and watch time are separate API lists; this is the join on user. */
   const users = useMemo<UserRow[]>(() => {
@@ -142,43 +159,52 @@ export function KpiModal({
   // biome-ignore lint/correctness/useExhaustiveDependencies: userSessions and isOpen are read, not triggers — the loading marker this sets is what stops a refetch
   useEffect(() => {
     if (target === "avg-session") return;
-    const pending = users.filter((user) => isOpen(user.key) && !userSessions[user.key]);
+    const pending = users.filter(
+      (user) => isOpen(user.key) && !userSessions[cacheKey(user.key)],
+    );
     if (pending.length === 0) return;
 
     setUserSessions((current) => {
       const next = { ...current };
-      for (const user of pending) next[user.key] = { status: "loading" };
+      for (const user of pending) next[cacheKey(user.key)] = { status: "loading" };
       return next;
     });
+    const signal = userAbort.current?.signal;
     const separator = query.startsWith("?") ? "&" : "?";
     for (const user of pending) {
+      const key = cacheKey(user.key);
       // `user_ids` wants the compound "instance_id:user_id" key; a bare id
       // is silently ignored by _user_instance_filter.
       clientFetch<SessionRow[]>(
         `/api/dashboard/sessions${query}${separator}` +
           `user_ids=${encodeURIComponent(user.key)}&limit=${SESSION_LIMIT}`,
+        { signal },
       )
         .then((rows) => {
-          setUserSessions((current) => ({
-            ...current,
-            [user.key]: { status: "ok", rows },
-          }));
+          if (signal?.aborted) return;
+          setUserSessions((current) => ({ ...current, [key]: { status: "ok", rows } }));
         })
         .catch((error: unknown) => {
-          setUserSessions((current) => ({
-            ...current,
-            [user.key]: {
-              status: "error",
-              message: error instanceof Error ? error.message : "Failed to load sessions",
-            },
-          }));
+          setUserSessions((current) => {
+            const next = { ...current };
+            // An aborted request leaves no marker behind, or the row would
+            // spin forever should the same query ask again.
+            if (signal?.aborted) delete next[key];
+            else
+              next[key] = {
+                status: "error",
+                message:
+                  error instanceof Error ? error.message : "Failed to load sessions",
+              };
+            return next;
+          });
         });
     }
   }, [target, query, users, flipped, listsExpanded]);
 
   /** One user's sessions, or where they are on the way in. */
-  function detailOf(key: string) {
-    const detail = userSessions[key];
+  function detailOf(userKey: string) {
+    const detail = userSessions[cacheKey(userKey)];
     if (!detail || detail.status === "loading")
       return <Spinner label="Loading sessions…" />;
     if (detail.status === "error") {

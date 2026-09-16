@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { CARD_TABLE } from "@/components/ui/table";
 import { cn } from "@/lib/cn";
+import { formatDateTime } from "@/lib/format";
 import type { MediaLibrary, MediaUser } from "@/lib/types";
 import { UserEditModal } from "./user-modal";
 
@@ -22,17 +23,6 @@ const COLUMNS: { key: SortKey; header: string; align?: "right" }[] = [
   { key: "max_simultaneous_streams", header: "Streams", align: "right" },
   { key: "last_activity_date", header: "Last active" },
 ];
-
-function formatDate(value: string | null, timeZone: string): string {
-  if (!value) return "Never";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  // Explicit zone, not the viewer's. A client component is still rendered on
-  // the server for the initial HTML, so a locale-default format produces one
-  // string there and another in the browser — a hydration mismatch, and a
-  // column whose meaning changes with who is looking at it.
-  return parsed.toLocaleString("en-GB", { timeZone });
-}
 
 /**
  * The media server's users, sortable, with an edit dialog per row.
@@ -233,7 +223,9 @@ export function UsersTable({
                   : "Unlimited"}
               </td>
               <td data-label="Last active" className={CARD_TABLE.cell}>
-                {formatDate(row.last_activity_date, timeZone)}
+                {row.last_activity_date
+                  ? formatDateTime(row.last_activity_date, timeZone)
+                  : "Never"}
               </td>
             </tr>
           ))}

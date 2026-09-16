@@ -43,8 +43,24 @@ export function InstanceForm({ instance, serviceType, serviceName }: Props) {
   // test disables Save again until it is rerun.
   const [verified, setVerified] = useState<string | null>(null);
   const connection = `${host.trim()}|${port.trim()}|${apiKey}`;
+  // What "Test connection" tries. With a key in the field it is the form's
+  // values, stored or not. Without one the only key there is is the stored
+  // one, and the API only pairs that with the stored host and port — so it
+  // used to report the old server reachable after the host had been edited.
+  // A changed host needs its key entered before it can be tested.
+  const testsForm = creating || apiKey !== "";
+  const hostChanged =
+    !creating &&
+    (host.trim() !== instance.host ||
+      port.trim() !== (instance.port === null ? "" : String(instance.port)));
   const canTest =
-    host.trim() !== "" && (creating ? apiKey !== "" : instance.is_configured);
+    host.trim() !== "" &&
+    (testsForm ? apiKey !== "" : instance.is_configured && !hostChanged);
+  const testHint = canTest
+    ? undefined
+    : hostChanged
+      ? "Enter the API key to test a changed host"
+      : "Set a host and API key first";
   const canSave = creating ? verified === connection : true;
 
   const [pending, startTransition] = useTransition();
@@ -88,8 +104,13 @@ export function InstanceForm({ instance, serviceType, serviceName }: Props) {
   function onTest() {
     startTesting(async () => {
       const tested = connection;
-      const result = creating
-        ? await testConnection({ service_type: serviceType, host, port, api_key: apiKey })
+      const result = testsForm
+        ? await testConnection({
+            service_type: creating ? serviceType : instance.service_type,
+            host,
+            port,
+            api_key: apiKey,
+          })
         : await testInstance(instance.id);
       setTestResult({ ok: result.ok, text: result.message });
       setVerified(result.ok ? tested : null);
@@ -201,7 +222,7 @@ export function InstanceForm({ instance, serviceType, serviceName }: Props) {
             variant="secondary"
             onClick={onTest}
             disabled={testing || !canTest}
-            title={canTest ? undefined : "Set a host and API key first"}
+            title={testHint}
           >
             {testing ? "Testing…" : "Test connection"}
           </Button>

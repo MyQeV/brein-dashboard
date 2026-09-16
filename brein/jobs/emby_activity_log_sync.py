@@ -12,6 +12,7 @@ from brein import config as brein_config
 from brein.integrations.api import emby as emby_api
 from brein.jobs._helpers import instance_id_int
 from brein.store import emby_activity_log as store_activity_log
+from brein.store.metrics_helpers import _snapshot_rebuild_since
 from brein.store.metrics_playback import rebuild_snapshots as _rebuild_snapshots
 from brein.store import emby_playback_sessions as store_playback_sessions
 from brein.store import emby_users as store_emby_users
@@ -27,11 +28,24 @@ store_dashboard_metrics = _DashboardMetrics()
 log = logging.getLogger(__name__)
 
 _last_snapshot_rebuild: float = 0.0
+# What the next snapshot rebuild has to cover: the earliest local stat_date a
+# session rebuild since the last one can have changed, or everything after a
+# full session rebuild (and on the first pass after boot, when nothing is
+# known). Every instance's sync feeds the same pair; the rebuild is global.
+_snapshot_since: str | None = None
+_snapshot_full_pending = True
 
 PAGE_SIZE = 8000
 CHUNK_DELAY_SECONDS = 0.5
 MAX_ENTRIES_PER_RUN = 200_000
 USER_ITEM_ID_BACKFILL_DELAY_SECONDS = 0.2
+# One /Users/{id} call and a sleep per candidate, so a run is bounded, and
+# the DISTINCT over the instance's whole log that finds them is not worth
+# repeating every minute: a user who never plays keeps the missing-id check
+# true forever.
+USER_ITEM_ID_BACKFILL_MAX_PER_RUN = 50
+USER_ITEM_ID_BACKFILL_INTERVAL_SECONDS = 600
+_last_user_item_id_backfill: dict[int, float] = {}
 
 
 async def _sync_one_instance(instance_id: int, instance_id_for_config: Any) -> None:
@@ -97,6 +111,16 @@ async def _sync_one_instance(instance_id: int, instance_id_for_config: Any) -> N
         )
 
 
+def _note_snapshot_change(changed_at_utc: str | None) -> None:
+    """Widen what the next snapshot rebuild covers; None means all of it."""
+    global _snapshot_since, _snapshot_full_pending
+    since = _snapshot_rebuild_since(changed_at_utc) if changed_at_utc else None
+    if since is None:
+        _snapshot_full_pending = True
+    elif _snapshot_since is None or since < _snapshot_since:
+        _snapshot_since = since
+
+
 async def _rebuild_playback_sessions(instance_id: int) -> None:
     max_entry_id = await store_activity_log.get_max_entry_id(instance_id)
     if max_entry_id is None:
@@ -108,6 +132,7 @@ async def _rebuild_playback_sessions(instance_id: int) -> None:
         n = await store_playback_sessions.rebuild_sessions(
             instance_id=instance_id, since_date=None
         )
+        _note_snapshot_change(None)
         if n:
             log.info(
                 "Emby playback sessions: instance_id=%s rebuilt %d sessions (full)",
@@ -125,6 +150,7 @@ async def _rebuild_playback_sessions(instance_id: int) -> None:
             n = await store_playback_sessions.rebuild_sessions(
                 instance_id=instance_id, since_date=since_date
             )
+            _note_snapshot_change(since_date)
             if n:
                 log.info(
                     "Emby playback sessions: instance_id=%s rebuilt %d sessions (since %s)",
@@ -138,10 +164,17 @@ async def _rebuild_playback_sessions(instance_id: int) -> None:
 
 
 async def _maybe_rebuild_dashboard_snapshots() -> None:
-    """Throttled global rebuild — caller may invoke per instance; gated by interval."""
-    global _last_snapshot_rebuild
+    """Throttled global rebuild — caller may invoke per instance; gated by interval.
+
+    Incremental from the earliest day a session rebuild touched since the
+    last pass, full when that is unknown, and skipped outright when no
+    session changed: every pass used to re-aggregate every session stored.
+    """
+    global _last_snapshot_rebuild, _snapshot_since, _snapshot_full_pending
     now = time.monotonic()
     if now - _last_snapshot_rebuild < brein_config.SNAPSHOT_REBUILD_INTERVAL_SECONDS:
+        return
+    if not _snapshot_full_pending and _snapshot_since is None:
         return
     # Stamped before the work, not after. Advancing only on success meant a
     # rebuild that keeps failing reran on every activity sync — the heaviest
@@ -149,8 +182,11 @@ async def _maybe_rebuild_dashboard_snapshots() -> None:
     # instance finishing during it queue another behind the lock. The Plex
     # path was fixed for this; these two were not.
     _last_snapshot_rebuild = now
+    since_date = None if _snapshot_full_pending else _snapshot_since
+    _snapshot_full_pending = False
+    _snapshot_since = None
     try:
-        await store_dashboard_metrics.rebuild_snapshots()
+        await store_dashboard_metrics.rebuild_snapshots(since_date=since_date)
         # The merged cache is the one the dashboard reads. This used to
         # clear only the per-backend emby cache, which the removed
         # /api/dashboard/*-metrics routes were the sole users of — so a
@@ -158,6 +194,8 @@ async def _maybe_rebuild_dashboard_snapshots() -> None:
         # serving the stale merged payload until its TTL ran out.
         await brein_cache.clear_media_metrics_cache()
     except Exception as e:
+        # The range this pass owed is lost with it; cover everything next time.
+        _snapshot_full_pending = True
         log.warning("Dashboard snapshot rebuild failed: %s", e)
 
 
@@ -172,12 +210,10 @@ async def _backfill_user_item_ids_for_instance(
     if service_type != "emby" or not base_url or not api_key:
         return 0
     candidates = await store_emby_users.get_distinct_user_ids_from_activity_log(
-        limit=None
+        instance_id=instance_id, limit=USER_ITEM_ID_BACKFILL_MAX_PER_RUN
     )
     updated = 0
-    for cand_instance_id, user_id in candidates:
-        if cand_instance_id != instance_id:
-            continue
+    for _cand_instance_id, user_id in candidates:
         if await store_emby_users.has_user_item_id_for_instance(instance_id, user_id):
             continue
         ok, user = await emby_api.get_user_by_id(base_url, api_key, user_id)
@@ -191,8 +227,37 @@ async def _backfill_user_item_ids_for_instance(
             continue
         if await store_emby_users.set_user_item_id(instance_id, user_guid, user_id):
             updated += 1
+        else:
+            # The server knows the id but no emby_users row carries that
+            # guid — a user the users sync no longer sees. Left unrecorded,
+            # it was fetched again on every run, forever.
+            await store_emby_users.record_user_item_id_skip(instance_id, user_id)
         await asyncio.sleep(USER_ITEM_ID_BACKFILL_DELAY_SECONDS)
     return updated
+
+
+async def _maybe_backfill_user_item_ids(
+    instance_id: int, instance_id_for_config: Any
+) -> None:
+    """Run the backfill for one instance when it has unresolved users, throttled."""
+    now = time.monotonic()
+    last = _last_user_item_id_backfill.get(instance_id)
+    if last is not None and now - last < USER_ITEM_ID_BACKFILL_INTERVAL_SECONDS:
+        return
+    try:
+        if not await store_emby_users.has_users_missing_user_item_id(instance_id):
+            return
+        _last_user_item_id_backfill[instance_id] = now
+        updated = await _backfill_user_item_ids_for_instance(
+            instance_id, instance_id_for_config
+        )
+        if updated:
+            log.info(
+                "Emby users: backfilled user_item_id for %d rows via Users API",
+                updated,
+            )
+    except Exception as e:
+        log.warning("Emby users user_item_id backfill failed: %s", e)
 
 
 async def run_emby_activity_log_sync_once(
@@ -212,16 +277,7 @@ async def run_emby_activity_log_sync_once(
     except Exception as e:
         log.warning("Emby session rebuild failed for instance %s: %s", iid, e)
     await _maybe_rebuild_dashboard_snapshots()
-    try:
-        if await store_emby_users.has_users_missing_user_item_id():
-            updated = await _backfill_user_item_ids_for_instance(iid, instance["id"])
-            if updated:
-                log.info(
-                    "Emby users: backfilled user_item_id for %d rows via Users API",
-                    updated,
-                )
-    except Exception as e:
-        log.warning("Emby users user_item_id backfill failed: %s", e)
+    await _maybe_backfill_user_item_ids(iid, instance["id"])
 
 
 async def run_activity_log_sync() -> None:
@@ -265,17 +321,8 @@ async def run_activity_log_sync() -> None:
     await asyncio.gather(*[_rebuild_one(inst) for inst in active_instances])
     await _maybe_rebuild_dashboard_snapshots()
 
-    try:
-        if await store_emby_users.has_users_missing_user_item_id():
-            for inst in active_instances:
-                iid = instance_id_int(inst)
-                if iid is None:
-                    continue
-                updated = await _backfill_user_item_ids_for_instance(iid, inst["id"])
-                if updated:
-                    log.info(
-                        "Emby users: backfilled user_item_id for %d rows via Users API",
-                        updated,
-                    )
-    except Exception as e:
-        log.warning("Emby users backfill_user_item_ids via Users API failed: %s", e)
+    for inst in active_instances:
+        iid = instance_id_int(inst)
+        if iid is None:
+            continue
+        await _maybe_backfill_user_item_ids(iid, inst["id"])

@@ -62,15 +62,37 @@ def test_sabnzbd_downloader_registered_with_capabilities():
 
 
 def test_app_imports_with_stub(monkeypatch):
-    import brein.extras as extras
+    """The open-source tree lists no extras; the app must still build.
 
-    monkeypatch.setattr(extras, "EXTRAS", [])
+    Reloading replaces the module-level `app` for everyone importing it
+    later, so the module is reloaded again on the way out with the real
+    EXTRAS restored — otherwise tests/extras passed or failed on collection
+    order alone.
+    """
+    import brein.extras as extras
     from brein import extensions
 
+    original = list(extras.EXTRAS)
+    monkeypatch.setattr(extras, "EXTRAS", [])
     extensions.reset_extensions()
     app_module = importlib.import_module("brein.web.app")
-    importlib.reload(app_module)
-    assert "/api/service-types" in _paths(app_module.app)
+    try:
+        importlib.reload(app_module)
+        assert "/api/service-types" in _paths(app_module.app)
+        assert set(extensions.load_extensions().service_types) == {
+            "emby",
+            "jellyfin",
+            "plex",
+            "sonarr",
+            "radarr",
+            "sabnzbd",
+        }
+    finally:
+        monkeypatch.setattr(extras, "EXTRAS", original)
+        extensions.reset_extensions()
+        importlib.reload(app_module)
+    if original:
+        assert set(extensions.load_extensions().service_types) > {"emby", "sabnzbd"}
 
 
 def test_service_types_endpoint_carries_tabs_and_icon(client):

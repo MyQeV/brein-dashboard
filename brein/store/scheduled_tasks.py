@@ -82,6 +82,8 @@ async def list_all_for_ui(
         f"""
         SELECT t.id, t.key, t.name, t.instance_id, t.interval_seconds, t.enabled,
                t.category, t.last_run_at, t.last_status, t.last_duration_ms,
+               t.last_run_at + (t.interval_seconds || ' seconds')::interval
+                   AS next_due_at,
                i.label AS instance_label, i.service_type AS instance_service_type,
                i.active AS instance_active
         FROM scheduled_tasks t
@@ -145,15 +147,20 @@ async def delete_unknown_keys(session: AsyncSession, known_keys: list[str]) -> i
     return result.rowcount or 0
 
 
-async def create_run(session: AsyncSession, task_id: int) -> int:
+async def create_run(
+    session: AsyncSession, task_id: int, started_at: datetime | None = None
+) -> int:
+    """Insert a run row; ``started_at`` for a row created after the run began."""
     sql = text(
         """
         INSERT INTO scheduled_task_runs (task_id, started_at, status)
-        VALUES (:task_id, NOW(), 'running')
+        VALUES (:task_id, COALESCE(:started_at, NOW()), 'running')
         RETURNING id
         """
     )
-    row = (await session.execute(sql, {"task_id": task_id})).fetchone()
+    row = (
+        await session.execute(sql, {"task_id": task_id, "started_at": started_at})
+    ).fetchone()
     if row is None:
         raise RuntimeError("create_run: INSERT did not return an id")
     return int(row[0])

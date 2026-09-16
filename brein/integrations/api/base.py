@@ -27,7 +27,11 @@ async def _ssrf_request_hook(request: httpx.Request) -> None:
     and it covers redirects too — httpx runs request hooks per redirect hop.
     """
     if await _is_ssrf_risk_url(str(request.url)):
-        raise SsrfBlockedError(f"Blocked request to restricted address: {request.url}")
+        # Origin only: the full URL carries the API key for the services
+        # that take it as a query parameter, and this message ends up in
+        # the log and in the connection-test reply.
+        origin = f"{request.url.scheme}://{request.url.netloc.decode('ascii')}"
+        raise SsrfBlockedError(f"Blocked request to restricted address: {origin}")
 
 
 def new_http_client(timeout: float = DEFAULT_HTTP_TIMEOUT) -> httpx.AsyncClient:
@@ -56,12 +60,15 @@ async def close_http_client() -> None:
     _shared_client = None
 
 
-# Restricted ranges: loopback and cloud metadata only.
+# Restricted ranges: loopback, unspecified, link-local and cloud metadata only.
 # LAN ranges (10.x, 172.16.x, 192.168.x) are allowed — users legitimately point to local media servers.
 _BLOCKED_RANGES = [
+    ipaddress.ip_network("0.0.0.0/8"),
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::/128"),
     ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fe80::/10"),
 ]
 
 
@@ -76,6 +83,13 @@ async def _is_ssrf_risk_url(url: str) -> bool:
 
     Every resolved address is checked, not just the first — a hostname with
     several A records must not slip through because one of them is public.
+    An IPv4-mapped IPv6 address (``::ffff:127.0.0.1``) is checked as the
+    IPv4 address it wraps, since it connects to the same place.
+
+    This lookup is separate from the one httpx makes to connect, so a name
+    whose record changes between the two (DNS rebinding) is not caught. The
+    guard is a filter on the configured URL, not a guarantee about the
+    socket that is eventually opened.
     """
     host = urlparse(url).hostname or ""
     if not host:
@@ -93,6 +107,8 @@ async def _is_ssrf_risk_url(url: str) -> bool:
             addr = ipaddress.ip_address(sockaddr[0])
         except ValueError:
             continue
+        if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+            addr = addr.ipv4_mapped
         if any(addr in net for net in _BLOCKED_RANGES):
             return True
     return False
@@ -101,6 +117,19 @@ async def _is_ssrf_risk_url(url: str) -> bool:
 def normalize_base_url(url: str) -> str:
     """Ensure base URL has no trailing slash."""
     return (url or "").strip().rstrip("/")
+
+
+def redirect_message(r: httpx.Response) -> str:
+    """What a connection test reports for a 3xx answer.
+
+    The clients never follow redirects, so an http:// URL that a server
+    answers with a 301 to https:// used to pass the test (301 < 400) and then
+    fail every data call, which insists on 200. The query string is dropped
+    from the Location: a server that echoes it back would put the API key in
+    the message.
+    """
+    location = (r.headers.get("location") or "").split("?", 1)[0] or "another URL"
+    return f"Server redirected to {location} — use that URL"
 
 
 async def get_with_api_key(
@@ -123,9 +152,11 @@ async def get_with_api_key(
     try:
         client = get_http_client()
         r = await client.get(url, headers=headers, timeout=timeout)
+        if 300 <= r.status_code < 400:
+            return False, redirect_message(r)
         if r.status_code == 401:
             return False, "Invalid API key"
-        if r.status_code >= 400:
+        if r.status_code != 200:
             return False, f"HTTP {r.status_code}"
         return True, "OK"
     except httpx.ConnectError as e:
@@ -159,6 +190,12 @@ async def get_json_with_api_key(
         client = get_http_client()
         r = await client.get(url, headers=headers, timeout=timeout)
         if r.status_code != 200:
+            log.warning(
+                "get_json HTTP %s from %s%s",
+                r.status_code,
+                base,
+                "/" + path.lstrip("/").split("?", 1)[0],
+            )
             return False, None
         return True, r.json()
     except Exception as e:
@@ -184,6 +221,12 @@ async def get_json_list_with_api_key(
         client = get_http_client()
         r = await client.get(url, headers=headers, timeout=timeout)
         if r.status_code != 200:
+            log.warning(
+                "get_json_list HTTP %s from %s%s",
+                r.status_code,
+                base,
+                "/" + path.lstrip("/").split("?", 1)[0],
+            )
             return False, None
         data = r.json()
         return (True, data) if isinstance(data, list) else (False, None)

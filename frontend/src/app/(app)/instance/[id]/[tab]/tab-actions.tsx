@@ -2,8 +2,9 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import type { ActionResult } from "@/lib/actions";
 import type { ArrTab } from "@/lib/arr-tabs";
-import { type ActionResult, runCommand, testAll as testAllAction } from "./actions";
+import { runCommand, testAll as testAllAction } from "./actions";
 
 /**
  * The upstream commands a tab can trigger, as buttons in its header.

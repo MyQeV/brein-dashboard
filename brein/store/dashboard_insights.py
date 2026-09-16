@@ -207,6 +207,7 @@ async def get_idle_users(
         )
         SELECT p.instance_id,
                ai.label AS instance_label,
+               p.user_key AS user_id,
                p.display_name,
                p.last_activity_date,
                MAX(w.last_played) AS last_played
@@ -233,6 +234,7 @@ async def get_idle_users(
             {
                 "instance_id": int(r["instance_id"]),
                 "instance_label": r["instance_label"] or "",
+                "user_id": r["user_id"] or "",
                 "display_name": r["display_name"] or "Unknown",
                 "last_played": r["last_played"] or "",
                 "last_activity_date": r["last_activity_date"] or "",
@@ -311,10 +313,11 @@ async def get_unwatched_items(
     """The titles nobody has played, by title.
 
     Not "newest first", though the tab once said so: the only timestamp the
-    item tables carry is `updated_at`, which the bulk upsert rewrites to one
-    `now` for every row on every sync, so it says when the library was last
-    walked, not when anything was added. Sorting on it produced sync-batch
-    order dressed up as recency.
+    item tables carry is `updated_at`. The bulk upsert now leaves unchanged
+    rows alone, so it says when the row's metadata last changed — closer,
+    but still not when the item was added, and for anything synced before
+    that change it is still the sync-batch stamp. Sorting on it produced
+    sync-batch order dressed up as recency.
     """
     wanted = item_type.title()
     if wanted not in _UNWATCHED_TYPES:

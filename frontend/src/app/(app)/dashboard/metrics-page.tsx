@@ -1,8 +1,10 @@
 import { apiFetch, softApiFetch } from "@/lib/api";
+import { fetchInstances } from "@/lib/instances-server";
 import { buildQuery, firstParam, type SearchParams } from "@/lib/params";
 import { previousRange } from "@/lib/previous-range";
 import { rowText } from "@/lib/rows";
-import type { Instance, MediaMetrics } from "@/lib/types";
+import { appTimeZone } from "@/lib/timezone";
+import type { MediaMetrics } from "@/lib/types";
 import { DateRange } from "./date-range";
 import { InstanceFilter } from "./instance-filter";
 import { UserFilter } from "./user-filter";
@@ -26,7 +28,7 @@ const MEDIA_SERVER_TYPES = new Set(["emby", "jellyfin", "plex"]);
  * tabs open on today.
  */
 function today(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: process.env.TZ || "UTC" });
+  return new Date().toLocaleDateString("en-CA", { timeZone: appTimeZone() });
 }
 
 export type MetricsPageData = {
@@ -87,14 +89,8 @@ export async function loadMetricsPage(
       )
     : metrics;
 
-  const instancesResult = await softApiFetch<{ instances: Instance[] } | Instance[]>(
-    "/api/instances",
-  );
-  const instanceRows = instancesResult.ok
-    ? Array.isArray(instancesResult.data)
-      ? instancesResult.data
-      : (instancesResult.data.instances ?? [])
-    : [];
+  // The same request the app layout's sidebar made, deduped by `cache`.
+  const instanceRows = await fetchInstances();
   // Only media servers report playback; Sonarr, Radarr and the rest have no
   // watch time to filter by, so they never belonged in this row.
   const instances = instanceRows

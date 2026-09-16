@@ -13,13 +13,15 @@ idempotent over user edits, and that the two maintenance statements do what
 they say.
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import text
 
 from brein.jobs import scheduled_task_reconciler as reconciler
-from brein.jobs.scheduled_task_registry import task_types
+from brein.jobs import scheduled_task_runner as runner
+from brein.jobs.scheduled_task_registry import TaskType, task_types
 from brein.store import scheduled_tasks as store
 from tests.conftest import requires_db
 
@@ -217,6 +219,102 @@ class TestRunBookkeeping:
         # And the task is no longer due, which is what stops the runner from
         # spawning it again on the very next five-second tick.
         assert task_id not in await _due_ids(session)
+
+
+def _probe_type(execute) -> TaskType:
+    return TaskType(
+        key=TEST_KEY,
+        name="Probe",
+        description="",
+        category="sync",
+        service_type=None,
+        default_interval_seconds=10,
+        execute=execute,
+    )
+
+
+class TestExecute:
+    """One run of a task through the runner, against real bookkeeping rows."""
+
+    async def test_a_frequent_task_that_succeeds_leaves_no_history(
+        self, session, monkeypatch
+    ):
+        """The ten-second broadcast alone wrote ~8.6k rows a day."""
+        await _reset(session)
+        task_id = await _task(session, interval_seconds=10)
+        calls = []
+
+        async def _ok(task, instance, work_session):
+            calls.append(task["id"])
+
+        monkeypatch.setattr(runner, "get_task_type", lambda key: _probe_type(_ok))
+        await runner._execute(task_id)
+
+        assert calls == [task_id]
+        assert await store.get_latest_runs(session, task_id) == []
+        task = await store.get_task(session, task_id)
+        assert task is not None
+        assert task["last_status"] == "success"
+        assert task_id not in runner.running_task_ids()
+
+    async def test_a_frequent_task_that_fails_gets_a_row_at_its_real_start(
+        self, session, monkeypatch
+    ):
+        await _reset(session)
+        task_id = await _task(session, interval_seconds=10)
+
+        async def _boom(task, instance, work_session):
+            raise RuntimeError("probe failed")
+
+        monkeypatch.setattr(runner, "get_task_type", lambda key: _probe_type(_boom))
+        before = datetime.now(timezone.utc)
+        await runner._execute(task_id)
+
+        runs = await store.get_latest_runs(session, task_id)
+        assert len(runs) == 1
+        assert runs[0]["status"] == "error"
+        assert "probe failed" in (runs[0]["error_message"] or "")
+        started_at = runs[0]["started_at"]
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        assert started_at >= before - timedelta(seconds=1)
+        task = await store.get_task(session, task_id)
+        assert task is not None
+        assert task["last_status"] == "error"
+
+    async def test_an_infrequent_task_records_its_success(self, session, monkeypatch):
+        await _reset(session)
+        task_id = await _task(session, interval_seconds=3600)
+
+        async def _ok(task, instance, work_session):
+            pass
+
+        monkeypatch.setattr(runner, "get_task_type", lambda key: _probe_type(_ok))
+        await runner._execute(task_id)
+
+        runs = await store.get_latest_runs(session, task_id)
+        assert [r["status"] for r in runs] == ["success"]
+
+    async def test_a_task_past_the_deadline_is_recorded_as_timed_out(
+        self, session, monkeypatch
+    ):
+        """A task that never returned used to stay in _running_task_ids for
+        the life of the process, and the scheduler never ran it again."""
+        await _reset(session)
+        task_id = await _task(session, interval_seconds=3600)
+
+        async def _hang(task, instance, work_session):
+            await asyncio.sleep(5)
+
+        monkeypatch.setattr(runner, "TASK_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(runner, "get_task_type", lambda key: _probe_type(_hang))
+        await runner._execute(task_id)
+
+        runs = await store.get_latest_runs(session, task_id)
+        assert len(runs) == 1
+        assert runs[0]["status"] == "error"
+        assert "timed out" in (runs[0]["error_message"] or "")
+        assert task_id not in runner.running_task_ids()
 
 
 class TestReconcile:

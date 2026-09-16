@@ -1,7 +1,7 @@
 """Build and store emby_playback_sessions from emby_activity_log_entries."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import text
@@ -50,8 +50,16 @@ async def set_last_processed_entry_id(instance_id: int, entry_id: int) -> None:
 
 
 def _parse_dt(date: str) -> datetime:
-    """Parse an ISO 8601 date string to a datetime."""
-    return datetime.fromisoformat(date)
+    """Parse an ISO 8601 date string to an aware UTC datetime.
+
+    A value without an offset is taken as UTC: subtracting a naive datetime
+    from an aware one raises TypeError, and one entry with a 'Z' next to one
+    without threw the whole group away.
+    """
+    parsed = datetime.fromisoformat(date)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _build_sessions_from_events(
@@ -79,7 +87,7 @@ def _build_sessions_from_events(
                 duration = int(
                     (_parse_dt(date) - _parse_dt(session_start_date)).total_seconds()
                 )
-            except ValueError:
+            except (TypeError, ValueError):
                 session_start_date = None
                 continue
             if 0 < duration <= MAX_DURATION_SECONDS:
@@ -111,6 +119,10 @@ async def rebuild_sessions(
         inst_filter = (
             " AND instance_id = :instance_id" if instance_id is not None else ""
         )
+        # The joined fetch below carries the column on both sides.
+        e_inst_filter = (
+            " AND e.instance_id = :instance_id" if instance_id is not None else ""
+        )
         inst_params: dict[str, Any] = (
             {"instance_id": instance_id} if instance_id is not None else {}
         )
@@ -134,15 +146,6 @@ async def rebuild_sessions(
             if not affected_groups:
                 return 0
 
-            for grp in affected_groups:
-                await session.execute(
-                    text(
-                        "DELETE FROM emby_playback_sessions"
-                        " WHERE instance_id = :iid AND user_id = :uid AND item_id = :item"
-                    ),
-                    {"iid": grp[0], "uid": grp[1], "item": grp[2]},
-                )
-
             await session.execute(
                 text(
                     "CREATE TEMP TABLE IF NOT EXISTS _rebuild_groups"
@@ -158,6 +161,20 @@ async def rebuild_sessions(
                 [{"iid": g[0], "uid": g[1], "item": g[2]} for g in affected_groups],
             )
 
+            # One statement for every group, not one round trip each: with a
+            # thousand groups touched in a minute that was a thousand DELETEs,
+            # every one a scan of the instance's sessions before the
+            # (instance_id, user_id, item_id) index existed.
+            await session.execute(
+                text(
+                    "DELETE FROM emby_playback_sessions s"
+                    " USING _rebuild_groups g"
+                    " WHERE s.instance_id = g.instance_id"
+                    "   AND s.user_id = g.user_id"
+                    "   AND s.item_id = g.item_id"
+                )
+            )
+
             fetch_result = await session.execute(
                 text(
                     f"""
@@ -169,9 +186,11 @@ async def rebuild_sessions(
                        AND g.item_id = e.item_id
                     WHERE e.type IN {_SQL_TYPES_LITERAL}
                       AND e.item_id IS NOT NULL AND e.user_id IS NOT NULL
+                      {e_inst_filter}
                     ORDER BY e.instance_id, e.user_id, e.item_id, e.date ASC
                     """
-                )
+                ),
+                inst_params,
             )
             rows = fetch_result.fetchall()
             await session.execute(text("DROP TABLE IF EXISTS _rebuild_groups"))

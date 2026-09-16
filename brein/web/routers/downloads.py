@@ -14,8 +14,8 @@ from pydantic import BaseModel, Field
 
 from brein.extensions import UnsupportedOperation, load_extensions
 from brein.integrations.api import sabnzbd as sabnzbd_api
-from brein.store import instances as store_instances
 from brein.web import auth as web_auth
+from brein.web.dependencies import require_instance_config
 from brein.web.schemas import User
 
 router = APIRouter(prefix="/api/instances/{instance_id}/downloads", tags=["downloads"])
@@ -49,15 +49,10 @@ class SpeedLimitBody(BaseModel):
 
 
 async def _config(instance_id: int) -> tuple[str, str, str, Any]:
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
+    service_type, base_url, api_key = await require_instance_config(instance_id)
     adapter = load_extensions().downloaders.get(service_type)
     if adapter is None:
         raise HTTPException(status_code=400, detail="Not a download client")
-    if not base_url:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
     return service_type, base_url, api_key, adapter
 
 

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CONTROL_HEIGHT } from "@/components/ui/control";
+import { Select } from "@/components/ui/select";
 
 type Filters = {
   min_date: string;
@@ -69,12 +70,13 @@ export function ActivityFilters({
             className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           />
         </label>
-        <label className="flex flex-col gap-1 text-sm">
+        <label htmlFor="activity-user" className="flex flex-col gap-1 text-sm">
           User
-          <select
+          <Select
+            id="activity-user"
+            size="sm"
             value={filters.user_id}
             onChange={(event) => set("user_id", event.target.value)}
-            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           >
             <option value="">All users</option>
             {users.map((user) => (
@@ -82,14 +84,15 @@ export function ActivityFilters({
                 {user.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
-        <label className="flex flex-col gap-1 text-sm">
+        <label htmlFor="activity-type" className="flex flex-col gap-1 text-sm">
           Type
-          <select
+          <Select
+            id="activity-type"
+            size="sm"
             value={filters.type}
             onChange={(event) => set("type", event.target.value)}
-            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           >
             <option value="">All types</option>
             {types.map((entry) => (
@@ -97,7 +100,7 @@ export function ActivityFilters({
                 {entry}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
         <Button type="submit" size="sm">

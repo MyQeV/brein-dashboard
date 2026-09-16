@@ -67,9 +67,8 @@ def app():
     return fastapi_app
 
 
-@pytest.fixture
-def client(app):
-    """A signed-in `TestClient`, with every auth dependency satisfied.
+def _signed_in_client(app, user, overrides):
+    """A `TestClient` whose listed auth dependencies all resolve to `user`.
 
     The app is deliberately *not* entered as a context manager: its lifespan
     starts the scheduler, opens WebSocket listeners and touches the database,
@@ -79,20 +78,8 @@ def client(app):
 
     from fastapi.testclient import TestClient
 
-    from brein.web import auth as web_auth
-    from brein.web.schemas import User
-
-    admin = User(id="1", username="tester", email=None, full_name=None, disabled=False)
-    overrides = (
-        web_auth.get_current_user,
-        web_auth.get_current_active_user,
-        web_auth.get_current_admin_user,
-        web_auth.get_current_user_cookie_or_bearer,
-        web_auth.get_current_admin_user_cookie_or_bearer,
-        web_auth.get_current_user_or_image_sig,
-    )
     for dependency in overrides:
-        app.dependency_overrides[dependency] = lambda: admin
+        app.dependency_overrides[dependency] = lambda: user
 
     # The setup gate counts users on every request to decide whether the
     # instance is still unclaimed. These tests mock the store and run through
@@ -107,6 +94,59 @@ def client(app):
         finally:
             for dependency in overrides:
                 app.dependency_overrides.pop(dependency, None)
+
+
+@pytest.fixture
+def client(app):
+    """A signed-in `TestClient`, with every auth dependency satisfied."""
+    from brein.web import auth as web_auth
+    from brein.web.schemas import User
+
+    admin = User(
+        id="1",
+        username="tester",
+        email=None,
+        full_name=None,
+        disabled=False,
+        is_admin=True,
+        role="admin",
+    )
+    overrides = (
+        web_auth.get_current_user,
+        web_auth.get_current_active_user,
+        web_auth.get_current_admin_user,
+        web_auth.get_current_user_cookie_or_bearer,
+        web_auth.get_current_admin_user_cookie_or_bearer,
+    )
+    yield from _signed_in_client(app, admin, overrides)
+
+
+@pytest.fixture
+def viewer_client(app):
+    """A signed-in `TestClient` for a non-admin user.
+
+    Only the user dependencies are overridden; the admin ones run for real
+    on top of them and refuse, so this is the client that can prove a route
+    is admin-only.
+    """
+    from brein.web import auth as web_auth
+    from brein.web.schemas import User
+
+    viewer = User(
+        id="2",
+        username="viewer",
+        email=None,
+        full_name=None,
+        disabled=False,
+        is_admin=False,
+        role="viewer",
+    )
+    overrides = (
+        web_auth.get_current_user,
+        web_auth.get_current_active_user,
+        web_auth.get_current_user_cookie_or_bearer,
+    )
+    yield from _signed_in_client(app, viewer, overrides)
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session", autouse=True)

@@ -248,7 +248,12 @@ async def has_user_item_id_for_instance(instance_id: int, user_id: str) -> bool:
 
 
 async def record_user_item_id_skip(instance_id: int, user_id: str) -> None:
-    """Record that GET /Users/{user_id} returned 404 for this instance."""
+    """Record that this activity-log user id cannot be resolved for the instance.
+
+    Either GET /Users/{user_id} failed, or it answered with a guid no
+    emby_users row carries. Both are permanent as far as the backfill can
+    tell, so the id is never fetched again.
+    """
     if not user_id or not user_id.strip():
         return
     async with get_session_factory()() as session:

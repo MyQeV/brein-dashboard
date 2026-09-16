@@ -16,11 +16,10 @@ function csrfToken(): string | undefined {
   return match ? decodeURIComponent(match[1]) : undefined;
 }
 
-export class ClientApiError extends Error {
+class ClientApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly body?: unknown,
   ) {
     super(message);
     this.name = "ClientApiError";
@@ -64,22 +63,53 @@ async function refreshSession(): Promise<RefreshOutcome> {
   return inFlightRefresh;
 }
 
-function signOut(): void {
+/**
+ * Whether the cookie jar holds a live session after all.
+ *
+ * The refresh token rotates, and two tabs waking up together both try to
+ * spend the same one: the loser's refresh is rejected even though the winner
+ * has just put a fresh access cookie in the shared jar. One probe tells the
+ * two apart before anyone is signed out.
+ */
+async function sessionAlive(): Promise<boolean> {
+  try {
+    const response = await fetch("/users/me", { credentials: "include" });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * To the login page, with the way back. A full navigation rather than the
+ * router: it drops every piece of client state the old session built up —
+ * the now-playing socket, cached responses — instead of carrying them over.
+ */
+export function signOut(): void {
   const next = encodeURIComponent(window.location.pathname + window.location.search);
   window.location.href = `/login?next=${next}`;
 }
 
-async function parseError(response: Response): Promise<ClientApiError> {
-  let detail: string = response.statusText || `HTTP ${response.status}`;
-  let body: unknown;
+/**
+ * The API's `detail` when it is a plain message. A 422 carries a list of
+ * field errors instead, which is not something to render as text.
+ */
+export async function errorDetail(response: Response): Promise<string | undefined> {
   try {
-    body = await response.json();
-    const candidate = (body as { detail?: unknown }).detail;
-    if (typeof candidate === "string") detail = candidate;
+    const body = (await response.json()) as { detail?: unknown };
+    return typeof body.detail === "string" ? body.detail : undefined;
   } catch {
-    // Non-JSON error body; keep the status text.
+    // Non-JSON error body.
+    return undefined;
   }
-  return new ClientApiError(detail, response.status, body);
+}
+
+async function parseError(response: Response): Promise<ClientApiError> {
+  const detail = await errorDetail(response);
+  return new ClientApiError(
+    detail ?? (response.statusText || `HTTP ${response.status}`),
+    response.status,
+  );
 }
 
 /**
@@ -104,7 +134,7 @@ export async function clientFetch<T>(path: string, init: RequestInit = {}): Prom
 
   if (response.status === 401) {
     const refreshed = await refreshSession();
-    if (refreshed === true) {
+    if (refreshed === true || (refreshed === false && (await sessionAlive()))) {
       response = await send();
     } else if (refreshed === false) {
       signOut();

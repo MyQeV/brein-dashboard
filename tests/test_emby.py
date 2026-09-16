@@ -211,9 +211,19 @@ class TestUserDetail:
             patch(f"{EMBY}.get_user_by_id", new_callable=AsyncMock) as m_get,
         ):
             m_cfg.return_value = CFG_EMBY
-            m_get.return_value = (False, None)
+            m_get.return_value = (True, None)
             r = client.get("/api/instances/1/users/missing")
         assert r.status_code == 404
+
+    def test_502_server_unreachable(self, client):
+        with (
+            patch(STORE_CFG, new_callable=AsyncMock) as m_cfg,
+            patch(f"{EMBY}.get_user_by_id", new_callable=AsyncMock) as m_get,
+        ):
+            m_cfg.return_value = CFG_EMBY
+            m_get.return_value = (False, None)
+            r = client.get("/api/instances/1/users/uid1")
+        assert r.status_code == 502
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +509,123 @@ class TestNowPlaying:
             r = client.get("/api/now-playing")
         assert r.status_code == 200
         assert r.json()["items"][0]["title"] == "Test Movie"
+
+    def test_200_comma_separated_instance_filter(self, client):
+        with patch(f"{CACHE}.get_cached", new_callable=AsyncMock) as m_get:
+            m_get.return_value = {
+                "items": [{"instance_id": 1}, {"instance_id": 2}, {"instance_id": 3}]
+            }
+            r = client.get("/api/now-playing?instance_id=1,3")
+        assert r.status_code == 200
+        assert [i["instance_id"] for i in r.json()["items"]] == [1, 3]
+
+    def test_400_garbage_in_instance_filter(self, client):
+        # "1,abc" used to narrow to [1] — a filter the caller never asked for.
+        with patch(f"{CACHE}.get_cached", new_callable=AsyncMock) as m_get:
+            m_get.return_value = {"items": []}
+            r = client.get("/api/now-playing?instance_id=1,abc")
+        assert r.status_code == 400
+        m_get.assert_not_awaited()
+
+    def test_400_garbage_in_dashboard_instance_filter(self, client):
+        """The dashboard routes share the rule through _parse_instance_ids."""
+        with patch(
+            f"{CACHE}.get_insight_cached", new_callable=AsyncMock, return_value=None
+        ) as m_get:
+            r = client.get("/api/dashboard/idle-users?instance_ids=1,abc")
+        assert r.status_code == 400
+        m_get.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# refresh_now_playing_state — Emby and Jellyfin sessions side by side
+# ---------------------------------------------------------------------------
+_INSTANCES = [
+    {
+        "id": 1,
+        "label": "Emby box",
+        "is_configured": True,
+        "active": True,
+        "app_url": "http://emby:8096",
+        "media_server_id": "srv-emby",
+    },
+    {
+        "id": 2,
+        "label": "Jellyfin box",
+        "is_configured": True,
+        "active": True,
+        "app_url": "http://jellyfin:8096",
+        "media_server_id": "srv-jf",
+    },
+]
+_CONFIGS = {
+    1: ("emby", "http://emby:8096", "k1"),
+    2: ("jellyfin", "http://jellyfin:8096", "k2"),
+}
+
+
+def _playing(session_id: str, item_id: str) -> dict:
+    return {
+        "Id": session_id,
+        "UserId": "u1",
+        "UserName": "Ada",
+        "DeviceName": "TV",
+        "NowPlayingItem": {"Id": item_id, "Name": "Pilot", "Type": "Episode"},
+        "PlayState": {"PositionTicks": 10, "IsPaused": False},
+    }
+
+
+class TestRefreshNowPlayingState:
+    async def _refresh(self, sessions_by_url: dict):
+        from brein.web.routers.now_playing import refresh_now_playing_state
+
+        async def _cfg(instance_id):
+            return _CONFIGS[instance_id]
+
+        async def _sessions(base_url, api_key, active_within_seconds=None):
+            return sessions_by_url[base_url]
+
+        with (
+            patch(
+                "brein.store.instances.list_instances",
+                new_callable=AsyncMock,
+                return_value=_INSTANCES,
+            ),
+            patch(STORE_CFG, side_effect=_cfg),
+            patch(f"{EMBY}.get_sessions", side_effect=_sessions),
+        ):
+            return await refresh_now_playing_state()
+
+    async def test_jellyfin_sessions_carry_their_own_service_type_and_link(self):
+        data = await self._refresh(
+            {
+                "http://emby:8096": [_playing("s1", "100")],
+                "http://jellyfin:8096": [_playing("s2", "200")],
+            }
+        )
+        by_instance = {i["instance_id"]: i for i in data["items"]}
+        assert set(by_instance) == {1, 2}
+        assert by_instance[1]["service_type"] == "emby"
+        assert by_instance[2]["service_type"] == "jellyfin"
+        # Emby keeps the hash-bang item page; Jellyfin's client dropped the
+        # bang and calls the page details.
+        assert by_instance[1]["item_url"] == (
+            "http://emby:8096/web/index.html#!/item?id=100&serverId=srv-emby"
+        )
+        assert by_instance[2]["item_url"] == (
+            "http://jellyfin:8096/web/index.html#/details?id=200&serverId=srv-jf"
+        )
+
+    async def test_a_server_that_did_not_answer_is_skipped_for_the_tick(self):
+        """None from get_sessions is "no answer", not "nothing playing": the
+        other servers' sessions still come through."""
+        data = await self._refresh(
+            {
+                "http://emby:8096": None,
+                "http://jellyfin:8096": [_playing("s2", "200")],
+            }
+        )
+        assert [i["instance_id"] for i in data["items"]] == [2]
 
 
 # ---------------------------------------------------------------------------

@@ -1,15 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
-import { CONTROL_HEIGHT } from "@/components/ui/control";
+import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { clientFetch } from "@/lib/client-fetch";
-import { PAGE_SIZES } from "@/lib/params";
-import { MODAL_LISTS_EXPANDED } from "@/lib/use-preference";
+import { DEFAULT_PAGE_SIZE, PAGE_SIZES } from "@/lib/params";
+import {
+  fetchPreferences,
+  MODAL_LISTS_EXPANDED,
+  type Preferences,
+  setPreference,
+} from "@/lib/preferences";
 
-/** Preference keys are `list_pagesize_<service>_<list>`. */
+/**
+ * Preference keys are `list_pagesize_<service>_<tab>`; the instance tab page
+ * reads the same key for its default page size.
+ */
 const PAGE_SIZE_LISTS: { key: string; label: string }[] = [
   { key: "list_pagesize_sonarr_queue", label: "Sonarr — Queue" },
   { key: "list_pagesize_sonarr_history", label: "Sonarr — History" },
@@ -25,70 +31,50 @@ const PAGE_SIZE_LISTS: { key: string; label: string }[] = [
   { key: "list_pagesize_radarr_events", label: "Radarr — Events" },
 ];
 
-const COLUMN_PREFIX = "list_columns_";
-const DEFAULT_PAGE_SIZE = 10;
-
-type Prefs = Record<string, unknown>;
-
 type State =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ok"; prefs: Prefs };
+  | { status: "ok"; prefs: Preferences };
 
 export function ListPreferences() {
   const [state, setState] = useState<State>({ status: "loading" });
   const [saving, setSaving] = useState<string | null>(null);
-
-  const load = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const prefs = await clientFetch<Prefs>("/api/user/preferences", { signal });
-      if (!signal?.aborted) setState({ status: "ok", prefs });
-    } catch (error) {
-      if (signal?.aborted) return;
-      setState({
-        status: "error",
-        message: error instanceof Error ? error.message : "Failed to load preferences",
-      });
-    }
-  }, []);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    void load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
-
-  async function setPreference(key: string, value: number | boolean) {
-    setSaving(key);
-    try {
-      await clientFetch(`/api/user/preferences/${encodeURIComponent(key)}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ value }),
+    fetchPreferences(controller.signal)
+      .then((prefs) => {
+        if (!controller.signal.aborted) setState({ status: "ok", prefs });
+      })
+      .catch((caught: unknown) => {
+        if (controller.signal.aborted) return;
+        setState({
+          status: "error",
+          message:
+            caught instanceof Error ? caught.message : "Failed to load preferences",
+        });
       });
+    return () => controller.abort();
+  }, []);
+
+  async function save(key: string, value: number | boolean) {
+    setSaving(key);
+    setError(null);
+    try {
+      await setPreference(key, value);
       setState((current) =>
         current.status === "ok"
           ? { status: "ok", prefs: { ...current.prefs, [key]: value } }
           : current,
       );
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Could not save the preference",
+      );
     } finally {
       setSaving(null);
     }
-  }
-
-  async function resetColumn(key: string) {
-    await clientFetch(`/api/user/preferences/${encodeURIComponent(key)}`, {
-      method: "DELETE",
-    });
-    await load();
-  }
-
-  async function resetAllColumns() {
-    await clientFetch(
-      `/api/user/preferences?prefix=${encodeURIComponent(COLUMN_PREFIX)}`,
-      { method: "DELETE" },
-    );
-    await load();
   }
 
   if (state.status === "loading") {
@@ -109,14 +95,16 @@ export function ListPreferences() {
     );
   }
 
-  const savedColumnKeys = Object.keys(state.prefs)
-    .filter((key) => key.startsWith(COLUMN_PREFIX))
-    .sort();
-
   const modalListsExpanded = state.prefs[MODAL_LISTS_EXPANDED] === true;
 
   return (
     <>
+      {error && (
+        <p role="alert" className="text-sm text-error">
+          {error}
+        </p>
+      )}
+
       <Card title="Modal lists">
         <p className="mb-3 text-sm text-muted">
           How the day-by-day lists in the dashboard's dialogs start out.
@@ -125,18 +113,18 @@ export function ListPreferences() {
           <label htmlFor={MODAL_LISTS_EXPANDED} className="text-sm">
             Day groups
           </label>
-          <select
+          <Select
+            size="sm"
             id={MODAL_LISTS_EXPANDED}
             value={modalListsExpanded ? "expanded" : "collapsed"}
             disabled={saving === MODAL_LISTS_EXPANDED}
             onChange={(event) =>
-              setPreference(MODAL_LISTS_EXPANDED, event.target.value === "expanded")
+              save(MODAL_LISTS_EXPANDED, event.target.value === "expanded")
             }
-            className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
           >
             <option value="collapsed">Collapsed</option>
             <option value="expanded">Expanded</option>
-          </select>
+          </Select>
         </div>
       </Card>
 
@@ -151,53 +139,23 @@ export function ListPreferences() {
                 <label htmlFor={key} className="text-sm">
                   {label}
                 </label>
-                <select
+                <Select
+                  size="sm"
                   id={key}
                   value={value}
                   disabled={saving === key}
-                  onChange={(event) => setPreference(key, Number(event.target.value))}
-                  className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm`}
+                  onChange={(event) => save(key, Number(event.target.value))}
                 >
                   {PAGE_SIZES.map((size) => (
                     <option key={size} value={size}>
                       {size}
                     </option>
                   ))}
-                </select>
+                </Select>
               </li>
             );
           })}
         </ul>
-      </Card>
-
-      <Card
-        title="Saved column layouts"
-        actions={
-          savedColumnKeys.length > 0 && (
-            <Button size="sm" variant="danger" onClick={resetAllColumns}>
-              Reset all
-            </Button>
-          )
-        }
-      >
-        {savedColumnKeys.length === 0 ? (
-          <p className="text-sm text-muted">
-            No saved layouts. Lists are using their default columns.
-          </p>
-        ) : (
-          <ul className="flex flex-col divide-y divide-border">
-            {savedColumnKeys.map((key) => (
-              <li key={key} className="flex items-center justify-between gap-4 py-2">
-                <span className="truncate text-sm">
-                  {key.slice(COLUMN_PREFIX.length).replace(/_/g, " ")}
-                </span>
-                <Button size="sm" variant="ghost" onClick={() => resetColumn(key)}>
-                  Reset
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
       </Card>
     </>
   );

@@ -4,8 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { CONTROL_HEIGHT } from "@/components/ui/control";
 import { Field } from "@/components/ui/field";
+import { Select } from "@/components/ui/select";
 import { createUser } from "./actions";
 
 const ROLES = ["user", "viewer", "admin"] as const;
@@ -107,20 +107,23 @@ export function AddUserForm() {
           onChange={(event) => setFullName(event.target.value)}
           disabled={pending}
         />
-        <label className="flex flex-col gap-1 text-sm font-medium">
+        <label
+          htmlFor="new-user-role"
+          className="flex flex-col gap-1 text-sm font-medium"
+        >
           Role
-          <select
+          <Select
+            id="new-user-role"
             value={role}
             onChange={(event) => setRole(event.target.value)}
             disabled={pending}
-            className={`${CONTROL_HEIGHT.md} rounded-md border border-border bg-bg px-3 text-sm`}
           >
             {ROLES.map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
         {error && (

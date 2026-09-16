@@ -6,13 +6,23 @@ the response is *not* the rejection we are guarding against, rather than a
 specific success code.
 """
 
+import time
+from unittest.mock import AsyncMock, patch
+
 import httpx
 import pytest
 
 from brein.web import csrf
-from brein.web.auth import ACCESS_TOKEN_COOKIE_NAME
+from brein.web.auth import ACCESS_TOKEN_COOKIE_NAME, REFRESH_TOKEN_COOKIE_NAME
+from brein.web.schemas import User
 
 CSRF_REJECTED = 403
+
+# A cookie-authenticated write with a JSON body: the kind of request the Next
+# frontend makes on every page, and the one the CSRF middleware exists for.
+PREFERENCE_URL = "/api/user/preferences/theme"
+SET_PREFERENCE = "brein.web.routers.user_preferences.store.set_preference"
+GET_PREFERENCES = "brein.web.routers.user_preferences.store.get_all"
 
 
 def _client(app) -> httpx.AsyncClient:
@@ -33,57 +43,77 @@ def _is_csrf_rejection(response: httpx.Response) -> bool:
 # ── CSRF ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_cookie_authed_form_post_without_csrf_token_is_rejected(app):
-    async with _client(app) as c:
-        r = await c.post(
-            "/settings/config",
-            data={"anything": "1"},
+def test_cookie_authed_write_without_csrf_token_is_rejected(client):
+    with patch(SET_PREFERENCE, new_callable=AsyncMock) as store:
+        r = client.put(
+            PREFERENCE_URL,
+            json={"value": "dark"},
             cookies={ACCESS_TOKEN_COOKIE_NAME: "session-cookie"},
         )
     assert _is_csrf_rejection(r)
+    store.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_mismatched_csrf_token_is_rejected(app):
-    async with _client(app) as c:
-        r = await c.post(
-            "/settings/config",
-            data={csrf.FORM_FIELD: "not-the-cookie"},
+def test_mismatched_csrf_token_is_rejected(client):
+    with patch(SET_PREFERENCE, new_callable=AsyncMock) as store:
+        r = client.put(
+            PREFERENCE_URL,
+            json={"value": "dark"},
+            headers={csrf.HEADER_NAME: "not-the-cookie"},
             cookies={
                 ACCESS_TOKEN_COOKIE_NAME: "session-cookie",
                 csrf.COOKIE_NAME: csrf.new_token(),
             },
         )
     assert _is_csrf_rejection(r)
+    store.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_matching_csrf_token_passes(app):
+def test_matching_csrf_header_reaches_the_handler(client):
+    """The header path is the one the frontend uses; the request must reach
+    the store, not merely avoid the 403."""
     token = csrf.new_token()
-    async with _client(app) as c:
-        r = await c.post(
-            "/settings/config",
-            data={csrf.FORM_FIELD: token},
+    with patch(SET_PREFERENCE, new_callable=AsyncMock) as store:
+        r = client.put(
+            PREFERENCE_URL,
+            json={"value": "dark"},
+            headers={csrf.HEADER_NAME: token},
             cookies={
                 ACCESS_TOKEN_COOKIE_NAME: "session-cookie",
                 csrf.COOKIE_NAME: token,
             },
         )
-    assert not _is_csrf_rejection(r)
+    assert r.status_code == 204, r.text
+    store.assert_awaited_once_with("1", "theme", "dark")
 
 
-@pytest.mark.asyncio
-async def test_bearer_authenticated_api_call_is_exempt(app):
+def test_matching_csrf_form_field_passes_the_middleware(client):
+    """The form-field fallback. No JSON route takes a form, so the handler
+    answers 422 — which is the router validating the body, past the CSRF
+    check, not the middleware refusing it."""
+    token = csrf.new_token()
+    r = client.put(
+        PREFERENCE_URL,
+        data={csrf.FORM_FIELD: token},
+        cookies={
+            ACCESS_TOKEN_COOKIE_NAME: "session-cookie",
+            csrf.COOKIE_NAME: token,
+        },
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_bearer_authenticated_api_call_is_exempt(client):
     """A cross-site form cannot set an Authorization header, so the Bearer API
     needs no token — and requiring one would break every API client."""
-    async with _client(app) as c:
-        r = await c.put(
-            "/api/services/sonarr/config",
-            json={"base_url": "http://example.com", "api_key": "x"},
+    with patch(SET_PREFERENCE, new_callable=AsyncMock) as store:
+        r = client.put(
+            PREFERENCE_URL,
+            json={"value": "dark"},
             headers={"Authorization": "Bearer irrelevant"},
         )
-    assert not _is_csrf_rejection(r)
+    assert r.status_code == 204, r.text
+    store.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -101,11 +131,26 @@ async def test_login_is_exempt(app):
     assert not _is_csrf_rejection(r)
 
 
-@pytest.mark.asyncio
-async def test_safe_methods_are_never_challenged(app):
-    async with _client(app) as c:
-        r = await c.get("/login", cookies={ACCESS_TOKEN_COOKIE_NAME: "session-cookie"})
-    assert not _is_csrf_rejection(r)
+def test_safe_methods_are_never_challenged(client):
+    with patch(GET_PREFERENCES, new_callable=AsyncMock, return_value={"a": 1}):
+        r = client.get(
+            "/api/user/preferences",
+            cookies={ACCESS_TOKEN_COOKIE_NAME: "session-cookie"},
+        )
+    assert r.status_code == 200
+    assert r.json() == {"a": 1}
+
+
+def test_a_cookie_authenticated_get_is_issued_a_csrf_cookie(client):
+    """The frontend never renders a template, so the middleware is the only
+    place a browser that has the session cookie but no token gets one."""
+    with patch(GET_PREFERENCES, new_callable=AsyncMock, return_value={}):
+        r = client.get(
+            "/api/user/preferences",
+            cookies={ACCESS_TOKEN_COOKIE_NAME: "session-cookie"},
+        )
+    assert r.status_code == 200
+    assert csrf.COOKIE_NAME in r.cookies
 
 
 def test_token_for_reuses_the_existing_cookie():
@@ -138,12 +183,55 @@ def test_token_for_reuses_the_existing_cookie():
         "http://localhost:8080",
         "http://169.254.169.254/latest/meta-data",
         "http://[::1]:8080",
+        # IPv4-mapped IPv6 connects to the same loopback.
+        "http://[::ffff:127.0.0.1]:8080",
+        # "This host" — routes to a local interface on most stacks.
+        "http://0.0.0.0:8080",
+        "http://[::]:8080",
+        # IPv6 link-local, the counterpart of 169.254/16.
+        "http://[fe80::1]:8080",
     ],
 )
 async def test_blocked_addresses_are_rejected(url):
     from brein.integrations.api.base import _is_ssrf_risk_url
 
     assert await _is_ssrf_risk_url(url) is True
+
+
+@pytest.mark.asyncio
+async def test_blocked_request_error_names_only_the_origin():
+    """The full URL carries the API key for services that take it as a query
+    parameter, and this message ends up in the log and the test reply."""
+    from brein.integrations.api.base import SsrfBlockedError, new_http_client
+
+    async with new_http_client(2.0) as client:
+        with pytest.raises(SsrfBlockedError) as exc:
+            await client.get("http://127.0.0.1:9/secret/path?apikey=hunter2")
+    message = str(exc.value)
+    assert "http://127.0.0.1:9" in message
+    assert "secret" not in message
+    assert "hunter2" not in message
+    assert "?" not in message
+
+
+def test_redirect_message_drops_the_query_string():
+    """A server that echoes the request's query back in Location would put
+    the API key in the connection-test reply."""
+    from brein.integrations.api.base import redirect_message
+
+    r = httpx.Response(
+        301, headers={"location": "https://emby.example/System/Info?api_key=hunter2"}
+    )
+    message = redirect_message(r)
+    assert "https://emby.example/System/Info" in message
+    assert "hunter2" not in message
+    assert "api_key" not in message
+
+
+def test_redirect_message_without_a_location():
+    from brein.integrations.api.base import redirect_message
+
+    assert "another URL" in redirect_message(httpx.Response(302))
 
 
 @pytest.mark.asyncio
@@ -295,28 +383,75 @@ async def test_bearer_only_routes_now_accept_the_session_cookie(app, monkeypatch
         )
 
     monkeypatch.setattr(auth, "get_user_from_token", _fake_user)
-    async with _client(app) as c:
-        r = await c.get(
-            "/api/services",
-            cookies={ACCESS_TOKEN_COOKIE_NAME: "cookie-only-no-bearer"},
-        )
-    assert r.status_code != 401, r.text
+    # The gate reads the user count from the test database, which may well
+    # be empty, and the route reads the store; the answer under test is the
+    # auth dependency's, so both are mocked.
+    with (
+        patch(
+            "brein.web.app.store_users.count_users",
+            new_callable=AsyncMock,
+            return_value=1,
+        ),
+        patch(
+            "brein.store.service_config.list_services",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+    ):
+        async with _client(app) as c:
+            r = await c.get(
+                "/api/services",
+                cookies={ACCESS_TOKEN_COOKIE_NAME: "cookie-only-no-bearer"},
+            )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"services": []}
 
 
 # ── User administration ──────────────────────────────────────────────────────
 
 
-def test_admin_cannot_change_their_own_role():
+def test_admin_cannot_change_their_own_role(client):
     """Self-demotion is how an instance ends up with no administrator, and it
     is not recoverable from the UI. The guard lived only in the Jinja form
     handler; it has to hold on the JSON path too."""
-    import inspect
+    with patch(
+        "brein.store.users.update_user_role_status", new_callable=AsyncMock
+    ) as store:
+        # The signed-in admin of the `client` fixture has id "1".
+        r = client.patch("/api/users/1", json={"role": "user", "disabled": False})
+    assert r.status_code == 400
+    assert "cannot change your own role" in r.json()["detail"].lower()
+    store.assert_not_awaited()
 
-    from brein.web.routers import auth as auth_router
 
-    source = inspect.getsource(auth_router.update_user_role_status_api)
-    assert "current_user.id == user_id" in source
-    assert "cannot change your own role" in source.lower()
+@pytest.mark.parametrize(
+    "method, path",
+    [
+        ("GET", "/api/tasks"),
+        ("GET", "/api/settings/system"),
+        ("GET", "/api/users"),
+        ("POST", "/api/users"),
+        ("PATCH", "/api/users/someone"),
+        ("PUT", "/api/instances/1"),
+        ("DELETE", "/api/instances/1"),
+        ("POST", "/api/instances/test"),
+    ],
+)
+def test_admin_only_routes_refuse_a_signed_in_viewer(viewer_client, method, path):
+    """A signed-in non-admin must get 403, not the route's own answer.
+
+    The `client` fixture overrides the admin dependency itself, so it can
+    never prove a route is admin-gated; this one only signs the viewer in.
+    """
+    r = viewer_client.request(method, path, json={})
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"] == "Admin required"
+
+
+def test_viewer_still_reaches_user_routes(viewer_client):
+    with patch(GET_PREFERENCES, new_callable=AsyncMock, return_value={}):
+        r = viewer_client.get("/api/user/preferences")
+    assert r.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -349,18 +484,220 @@ async def test_form_posts_still_reach_their_handler_with_a_body(app):
     assert "await request.form()" not in source
 
 
-@pytest.mark.asyncio
-async def test_login_issues_a_csrf_cookie(app):
-    """The signed-in shell renders server-side, so those Set-Cookie headers
-    never reach the browser. Without issuing one at login, the first write
-    after signing in has no token to send."""
-    import inspect
+# ── Login ────────────────────────────────────────────────────────────────────
 
-    from brein.web.routers import auth as auth_router
+AUTHENTICATE = "brein.web.auth.authenticate_user"
+LOGIN_FAILURE = "brein.store.users.record_login_failure"
+LOGIN_SUCCESS = "brein.store.users.record_login_success"
+CREATE_REFRESH = "brein.store.refresh_tokens.create"
+ON_LOGIN = "brein.web.routers.auth.run_on_login_tasks"
 
-    source = inspect.getsource(auth_router)
-    assert "_set_csrf_cookie" in source
-    assert source.count("_set_csrf_cookie(request, response)") >= 2
+LOGIN_FORM = {"username": "ada", "password": "hunter2"}  # pragma: allowlist secret
+
+
+def _user(**overrides) -> User:
+    fields = {
+        "id": "u1",
+        "username": "ada",
+        "email": None,
+        "full_name": None,
+        "disabled": False,
+        "is_admin": False,
+        "role": "user",
+    }
+    return User(**{**fields, **overrides})
+
+
+def _login(client, authenticated, **kwargs):
+    with (
+        patch(AUTHENTICATE, new_callable=AsyncMock, return_value=authenticated),
+        patch(LOGIN_FAILURE, new_callable=AsyncMock) as failure,
+        patch(LOGIN_SUCCESS, new_callable=AsyncMock),
+        patch(
+            CREATE_REFRESH, new_callable=AsyncMock, return_value=("rt-plain", "rt-id")
+        ),
+        patch(ON_LOGIN),
+    ):
+        r = client.post("/token", data=LOGIN_FORM, **kwargs)
+    return r, failure
+
+
+def test_disabled_user_is_refused_like_a_wrong_password(client):
+    """A disabled account must not be told apart from a wrong password, and
+    the attempt counts towards its lockout like any other failure."""
+    disabled, failure = _login(client, (_user(disabled=True), None))
+    wrong, wrong_failure = _login(client, (None, "u1"))
+
+    assert disabled.status_code == wrong.status_code == 401
+    assert disabled.json() == wrong.json()
+    failure.assert_awaited_once_with("u1")
+    wrong_failure.assert_awaited_once_with("u1")
+    assert ACCESS_TOKEN_COOKIE_NAME not in disabled.cookies
+
+
+def test_unknown_user_records_no_failure(client):
+    r, failure = _login(client, (None, None))
+    assert r.status_code == 401
+    failure.assert_not_awaited()
+
+
+def test_browser_login_keeps_the_tokens_in_the_cookies(client):
+    """A browser sends Origin; script on the page must not be handed the
+    tokens that httpOnly exists to keep from it."""
+    r, _ = _login(client, (_user(), None), headers={"Origin": "http://testserver"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"token_type": "bearer"}
+    assert r.cookies.get(ACCESS_TOKEN_COOKIE_NAME)
+    assert r.cookies.get(REFRESH_TOKEN_COOKIE_NAME) == "rt-plain"
+    # The first write after signing in needs a token to echo back.
+    assert r.cookies.get(csrf.COOKIE_NAME)
+
+
+def test_script_login_gets_the_tokens_in_the_body(client):
+    r, _ = _login(client, (_user(), None))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["token_type"] == "bearer"
+    assert body["access_token"]
+    assert body["refresh_token"] == "rt-plain"
+
+
+def _refresh(client, **kwargs):
+    token_info = {"user_id": "u1", "expires_at": time.time() + 3600}
+    row = {"id": "u1", "username": "ada", "disabled": False}
+    with (
+        patch(
+            "brein.store.refresh_tokens.get_token_info",
+            new_callable=AsyncMock,
+            return_value=token_info,
+        ),
+        patch(
+            "brein.store.users.get_user_by_id", new_callable=AsyncMock, return_value=row
+        ),
+        patch(
+            "brein.store.refresh_tokens.rotate",
+            new_callable=AsyncMock,
+            return_value=("rt-next", "rt-next-id"),
+        ) as rotate,
+    ):
+        r = client.post("/refresh", **kwargs)
+    return r, rotate
+
+
+def test_cookie_refresh_keeps_the_tokens_in_the_cookies(client):
+    r, rotate = _refresh(client, cookies={REFRESH_TOKEN_COOKIE_NAME: "rt-plain"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"token_type": "bearer"}
+    assert r.cookies.get(REFRESH_TOKEN_COOKIE_NAME) == "rt-next"
+    assert r.cookies.get(ACCESS_TOKEN_COOKIE_NAME)
+    assert r.cookies.get(csrf.COOKIE_NAME)
+    rotate.assert_awaited_once()
+    assert rotate.await_args.args[0] == "rt-plain"
+
+
+def test_body_refresh_gets_the_tokens_in_the_body(client):
+    r, _ = _refresh(client, json={"refresh_token": "rt-plain"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["refresh_token"] == "rt-next"
+    assert body["access_token"]
+
+
+def test_login_rate_limit_applies_when_enabled(client):
+    """conftest disables the limiter; this turns it back on for one test to
+    prove the decorator on /token is live, not decorative."""
+    from brein.web.rate_limit import limiter
+
+    limiter.enabled = True
+    limiter.reset()
+    try:
+        codes = [_login(client, (None, None))[0].status_code for _ in range(11)]
+    finally:
+        limiter.enabled = False
+        limiter.reset()
+    assert codes[:10] == [401] * 10
+    assert codes[10] == 429
+
+
+# ── API docs ─────────────────────────────────────────────────────────────────
+
+
+def test_api_docs_are_not_served_outside_dev(app, client):
+    """The schema enumerates every route to anyone who asks, unauthenticated."""
+    from brein import config as brein_config
+
+    if brein_config.DEV:
+        pytest.skip("BREIN_DEV is set; the docs are meant to be served")
+    assert app.docs_url is None
+    assert app.redoc_url is None
+    assert app.openapi_url is None
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert client.get(path).status_code == 404, path
+
+
+# ── WebSocket origin ─────────────────────────────────────────────────────────
+
+
+def test_websocket_refuses_a_foreign_origin(client):
+    """The session cookie rides along on an upgrade from any page, so a page
+    on another site could otherwise open the feed as the signed-in user."""
+    from starlette.websockets import WebSocketDisconnect
+
+    client.cookies.set(ACCESS_TOKEN_COOKIE_NAME, "session-cookie")
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect(
+            "/ws/now-playing", headers={"origin": "http://evil.example"}
+        ):
+            pass
+    assert exc.value.code == 1008
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"origin": "http://testserver"},
+        {"origin": "https://testserver:3100"},
+        {},
+    ],
+)
+def test_websocket_accepts_a_matching_or_absent_origin(client, headers):
+    with (
+        patch(
+            "brein.web.auth.get_user_from_token",
+            new_callable=AsyncMock,
+            return_value=_user(),
+        ),
+        patch(
+            "brein.cache.get_cached", new_callable=AsyncMock, return_value={"items": []}
+        ),
+    ):
+        with client.websocket_connect("/ws/now-playing", headers=headers) as ws:
+            ws.send_json({"token": "t"})
+            assert ws.receive_json() == {"items": []}
+
+
+def test_origin_check_reads_the_forwarded_host():
+    """Behind the frontend's rewrite proxy Host is the upstream target; the
+    browser's host arrives in X-Forwarded-Host."""
+    from brein.web.routers.now_playing import _origin_allowed
+
+    class _Ws:
+        def __init__(self, headers):
+            self.headers = headers
+
+    assert _origin_allowed(
+        _Ws(
+            {
+                "origin": "https://brein.example",
+                "host": "brein:8001",
+                "x-forwarded-host": "brein.example:443, proxy.internal",
+            }
+        )
+    )
+    assert not _origin_allowed(
+        _Ws({"origin": "https://evil.example", "host": "brein.example"})
+    )
+    assert not _origin_allowed(_Ws({"origin": "null", "host": "brein.example"}))
 
 
 # ── Setup gate ────────────────────────────────────────────────────────────────

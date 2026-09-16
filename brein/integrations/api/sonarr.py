@@ -79,17 +79,39 @@ async def get_series_by_id(
 
 
 # Sonarr defaults to pageSize=10, and the queue view presents what it is
-# given as the whole queue — so a 25-item queue silently showed 10.
+# given as the whole queue — so a 25-item queue silently showed 10. One page
+# was still a cap, so the pages are walked until a short one, the server's
+# own totalRecords, or QUEUE_MAX_PAGES.
 QUEUE_PAGE_SIZE = 200
+QUEUE_MAX_PAGES = 20
 
 
 async def get_queue(base_url: str, api_key: str) -> tuple[bool, dict | None]:
-    """GET /api/v3/queue?includeEpisode=true. Returns (True, data) or (False, None)."""
-    return await get_json_with_api_key(
-        base_url,
-        f"/api/v3/queue?includeEpisode=true&pageSize={QUEUE_PAGE_SIZE}",
-        api_key,
-    )
+    """GET /api/v3/queue?includeEpisode=true, every page. Returns (True, data) with all records merged or (False, None)."""
+    first: dict | None = None
+    records: list = []
+    for page in range(1, QUEUE_MAX_PAGES + 1):
+        ok, data = await get_json_with_api_key(
+            base_url,
+            f"/api/v3/queue?includeEpisode=true&page={page}&pageSize={QUEUE_PAGE_SIZE}",
+            api_key,
+        )
+        if not ok or not isinstance(data, dict):
+            return False, None
+        if first is None:
+            first = data
+        page_records = data.get("records")
+        if not isinstance(page_records, list):
+            break
+        records.extend(page_records)
+        total = data.get("totalRecords")
+        if len(page_records) < QUEUE_PAGE_SIZE or (
+            isinstance(total, int) and len(records) >= total
+        ):
+            break
+    if first is None:
+        return False, None
+    return True, {**first, "records": records}
 
 
 async def get_queue_details(

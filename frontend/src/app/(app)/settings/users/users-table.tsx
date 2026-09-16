@@ -2,17 +2,19 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { CONTROL_HEIGHT } from "@/components/ui/control";
+import { Select } from "@/components/ui/select";
 import { CARD_TABLE } from "@/components/ui/table";
 import { cn } from "@/lib/cn";
+import { formatDateTime } from "@/lib/format";
+import { useTimeZone } from "@/lib/timezone-context";
 import type { AdminUser } from "@/lib/types";
 import { updateUserRole } from "./actions";
 
 const ROLES = ["admin", "user", "viewer"] as const;
 
-function formatEpoch(value: number | null): string {
+function formatEpoch(value: number | null, timeZone: string): string {
   if (!value) return "Never";
-  return new Date(value * 1000).toLocaleString("en-GB", { timeZone: "UTC" });
+  return formatDateTime(new Date(value * 1000).toISOString(), timeZone);
 }
 
 export function UsersTable({
@@ -25,6 +27,7 @@ export function UsersTable({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+  const timeZone = useTimeZone();
 
   function change(user: AdminUser, patch: { role?: string; disabled?: boolean }) {
     setBusyId(user.id);
@@ -77,7 +80,8 @@ export function UsersTable({
                   {isSelf && <span className="ml-2 text-xs text-muted">(you)</span>}
                 </td>
                 <td data-label="Role" className={CARD_TABLE.cell}>
-                  <select
+                  <Select
+                    size="sm"
                     value={user.role}
                     aria-label={`Role for ${user.username}`}
                     // The API refuses self-edits; disabling here means the
@@ -85,14 +89,14 @@ export function UsersTable({
                     disabled={isSelf || busy}
                     title={isSelf ? "You cannot change your own role" : undefined}
                     onChange={(event) => change(user, { role: event.target.value })}
-                    className={`${CONTROL_HEIGHT.sm} rounded-md border border-border bg-bg px-2 text-sm disabled:opacity-50`}
+                    className="disabled:opacity-50"
                   >
                     {ROLES.map((role) => (
                       <option key={role} value={role}>
                         {role}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </td>
                 <td data-label="State" className={CARD_TABLE.cell}>
                   <Button
@@ -106,7 +110,7 @@ export function UsersTable({
                   </Button>
                 </td>
                 <td data-label="Last login" className={cn(CARD_TABLE.cell, "text-muted")}>
-                  {formatEpoch(user.last_login_at)}
+                  {formatEpoch(user.last_login_at, timeZone)}
                 </td>
                 <td
                   data-label="Failed logins"

@@ -53,15 +53,18 @@ ROW_KEYS = frozenset(
 USER_DRILL_KEYS = ROW_KEYS - {"user_display_name"}
 
 # The stored form: the sync jobs keep the API's own string rather than parsing
-# it, so every start_time is UTC text.
-START = f"{DAY}T20:00:00.0000000Z"
+# it, so every start_time is UTC text. Midday, so the play stays on DAY in
+# every zone the suite might inherit from .env: at 20:00Z anything east of
+# UTC+4 rolled the local date over and the DAY..DAY drills found nothing.
+START_HOUR_UTC = 12
+START = f"{DAY}T{START_HOUR_UTC:02d}:00:00.0000000Z"
 SECONDS = 1800
 
-# The hour drill buckets in the app's zone, not UTC, so the bucket a 20:00 UTC
-# play lands in depends on TZ. Resolved here rather than hard-coded, or this
-# test passes only in London.
+# The hour drill buckets in the app's zone, not UTC, so the bucket a midday
+# UTC play lands in depends on TZ. Resolved here rather than hard-coded, or
+# this test passes only in London.
 LOCAL_HOUR = (
-    datetime(2031, 5, 4, 20, tzinfo=timezone.utc)
+    datetime(2031, 5, 4, START_HOUR_UTC, tzinfo=timezone.utc)
     .astimezone(ZoneInfo(brein_config.TIMEZONE))
     .hour
 )

@@ -6,10 +6,17 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
+import { errorDetail } from "@/lib/client-fetch";
 
-/** Only ever follow a same-origin path, never an absolute URL from the query. */
+/**
+ * Only ever follow a same-origin path, never an absolute URL from the query.
+ *
+ * A leading `//` is a scheme-relative URL, and browsers read `/\` the same
+ * way — so `next=/\evil.com` would have left the site.
+ */
 function safeNext(value: string | null): string {
-  return value?.startsWith("/") && !value.startsWith("//") ? value : "/";
+  if (!value?.startsWith("/")) return "/";
+  return value.startsWith("//") || value.startsWith("/\\") ? "/" : value;
 }
 
 export function LoginForm() {
@@ -75,11 +82,7 @@ export function LoginForm() {
         body,
       });
       if (!response.ok) {
-        const detail = await response
-          .json()
-          .then((data: { detail?: string }) => data.detail)
-          .catch(() => undefined);
-        setError(detail ?? "Incorrect username or password.");
+        setError((await errorDetail(response)) ?? "Incorrect username or password.");
         setPending(false);
         return;
       }

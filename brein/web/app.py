@@ -219,7 +219,17 @@ async def lifespan(app: FastAPI):
         await brein_db.close_engine()
 
 
-app = FastAPI(title="Brein", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Brein",
+    version="0.1.0",
+    lifespan=lifespan,
+    # The docs and the OpenAPI schema enumerate every route and request shape
+    # to anyone who asks, unauthenticated — a map of the attack surface, so
+    # they are only served in dev mode.
+    docs_url="/docs" if brein_config.DEV else None,
+    redoc_url="/redoc" if brein_config.DEV else None,
+    openapi_url="/openapi.json" if brein_config.DEV else None,
+)
 if os.environ.get("BREIN_DISABLE_RATE_LIMIT", "").strip().lower() in (
     "1",
     "true",
@@ -232,11 +242,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Redirect GET 401 on app pages to login with next= so user can log in and return."""
-    if exc.status_code == 401 and request.method == "GET":
-        path = request.url.path
-        if path == "/profile":
-            return RedirectResponse(url="/login?next=/profile", status_code=302)
+    """Every error is JSON; the frontend owns the login redirect."""
     headers = getattr(exc, "headers", None) or {}
     return JSONResponse(
         status_code=exc.status_code,

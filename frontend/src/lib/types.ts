@@ -222,11 +222,28 @@ export type ScheduledTask = {
   next_due_at: string | null;
 };
 
+/** GET /api/tasks/{id} — `task` is the row itself, without the instance join of the list. */
+export type TaskDetail = {
+  id: number;
+  key: string;
+  name: string;
+  category: string | null;
+  instance_id: number | null;
+  interval_seconds: number;
+  enabled: boolean;
+  is_running: boolean;
+  last_run_at: string | null;
+  last_status: string | null;
+  last_duration_ms: number | null;
+};
+
 export type TaskRun = {
+  id: number;
   started_at: string | null;
   finished_at: string | null;
   duration_ms: number | null;
   status: string | null;
+  /** The traceback, cut to 4000 characters when it was stored. */
   error_message: string | null;
 };
 

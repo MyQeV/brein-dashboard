@@ -197,7 +197,7 @@ async def update_instance(
         row = r.fetchone()
         if not row:
             raise ValueError(f"Instance not found: {instance_id}")
-        cur_host, _, cur_key, cur_label, cur_external, cur_active, cur_sort = (
+        cur_host, cur_port, cur_key, cur_label, cur_external, cur_active, cur_sort = (
             row[0],
             row[1],
             row[2],
@@ -213,9 +213,11 @@ async def update_instance(
         elif extracted_port is not None:
             new_port = extracted_port
         else:
-            new_port = None
+            # "None keeps existing value" held for every column but this one:
+            # a PUT that omitted port silently reset it to the service default.
+            new_port = cur_port
         new_key = api_key if api_key is not None else cur_key
-        new_label = (label if label is not None else cur_label) or cur_label or ""
+        new_label = (label if label is not None else cur_label) or ""
         new_external = (
             external_url if external_url is not None else cur_external
         ) or ""

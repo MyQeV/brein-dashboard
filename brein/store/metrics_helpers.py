@@ -1,7 +1,16 @@
 """Shared SQL query-building helpers for metrics modules."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo
+
+from brein import config as brein_config
+
+# Emby/Jellyfin item types that count as live TV. The snapshot totals and the
+# media-type CASE each spelled this out and disagreed on 'TvChannel', so the
+# tile and the doughnut counted different sessions.
+LIVE_TV_TYPES: tuple[str, ...] = ("LiveTvChannel", "TvChannel", "Program")
+_LIVE_TV_SQL = "(" + ", ".join(f"'{t}'" for t in LIVE_TV_TYPES) + ")"
 
 
 def _local_date_expr(col: str, tz_param: str = "tz") -> str:
@@ -97,3 +106,40 @@ def _date_range_where(
         f" AND {column} >= :start_date AND {column} <= :end_date",
         {"start_date": start_date, "end_date": end_date},
     )
+
+
+def _snapshot_rebuild_since(changed_at_utc: str) -> str | None:
+    """The first local stat_date an incremental snapshot rebuild must cover.
+
+    ``changed_at_utc`` is the ISO-8601 UTC time of the oldest activity-log
+    entry the last session rebuild took in. The session that entry closes can
+    have started up to MAX_DURATION_SECONDS earlier, and the local day can
+    begin before the UTC one, so the answer is that entry's local date minus
+    a day. None when the text is not a timestamp — the caller then rebuilds
+    everything rather than guess.
+    """
+    try:
+        changed = datetime.fromisoformat(changed_at_utc[:19])
+    except (TypeError, ValueError):
+        return None
+    tz: tzinfo
+    try:
+        tz = ZoneInfo(brein_config.TIMEZONE)
+    except Exception:
+        tz = timezone.utc
+    local = changed.replace(tzinfo=timezone.utc).astimezone(tz).date()
+    return (local - timedelta(days=1)).isoformat()
+
+
+def _snapshot_since_params(since_date: str) -> dict[str, str]:
+    """Bounds for an incremental snapshot rebuild from local ``since_date``.
+
+    ``since_lo`` is the raw-text prefilter on start_time, a day earlier so no
+    timezone offset can push a row that belongs on ``since_date`` below it —
+    the same shape as `_utc_window_params`.
+    """
+    try:
+        lo = (date.fromisoformat(since_date) - timedelta(days=1)).isoformat()
+    except ValueError:
+        lo = ""
+    return {"since_date": since_date, "since_lo": lo}

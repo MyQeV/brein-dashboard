@@ -121,16 +121,30 @@ def test_main_does_not_initialise_the_database():
     assert not any("init_db()" in line for line in code_lines)
 
 
-def test_unhandled_exception_handler_does_not_bypass_logging():
+def test_unhandled_exception_is_logged_with_its_traceback(app, client, caplog):
     """print_exc wrote outside the logging config, skipping the rotating
-    file handler, and duplicated the log.exception above it."""
-    import inspect
+    file handler, and duplicated the log.exception above it. The record
+    itself has to carry the traceback, and the caller gets a plain 500."""
+    from unittest.mock import AsyncMock, patch
 
-    from brein.web import app as app_module
+    from fastapi.testclient import TestClient
 
-    source = inspect.getsource(app_module.unhandled_exception_handler)
-    assert "log.exception" in source
-    assert "print_exc" not in source
+    with (
+        patch(
+            "brein.web.routers.instances.store_instances.list_instances",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("store exploded"),
+        ),
+        caplog.at_level("ERROR", logger="brein.web.app"),
+    ):
+        # The `client` fixture re-raises server errors; this one reports them.
+        r = TestClient(app, raise_server_exceptions=False).get("/api/instances")
+    assert r.status_code == 500
+    assert r.json() == {"detail": "Internal Server Error"}
+    records = [rec for rec in caplog.records if "Unhandled exception" in rec.message]
+    assert records, caplog.text
+    assert records[0].exc_info is not None
+    assert "store exploded" in caplog.text
 
 
 # ── Jellyfin dispatch ────────────────────────────────────────────────────────
@@ -208,3 +222,12 @@ def test_interval_env_vars_still_seed_the_registry():
 
     for key in ("emby_users_sync", "emby_items_sync", "sabnzbd_server_stats_sync"):
         assert task_types()[key].default_interval_seconds > 0
+
+
+def test_the_dashboard_cache_refresh_task_is_gone():
+    """The dashboard reads its snapshots directly; nothing prewarms them, and
+    a registry key without a job module would fail on every tick."""
+    from brein.jobs.scheduled_task_registry import task_types
+
+    assert "dashboard_cache_refresh" not in task_types()
+    assert not any("dashboard" in key for key in task_types())

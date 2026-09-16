@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from brein import config as brein_config
 from brein.store.metrics_helpers import (
+    _LIVE_TV_SQL,
     _UTC_TEXT_WINDOW,
     _date_range_where,
     _instance_filter,
@@ -133,7 +134,7 @@ async def _get_watch_time_by_media_type(
               CASE
                 WHEN i.type = 'Movie' THEN 'Movie'
                 WHEN i.type = 'Episode' THEN 'Episode'
-                WHEN i.type IN ('LiveTvChannel', 'TvChannel', 'Program') THEN 'LiveTV'
+                WHEN i.type IN {_LIVE_TV_SQL} THEN 'LiveTV'
                 WHEN i.type = 'Audio' THEN 'Audio'
                 ELSE 'Other'
               END AS media_type,

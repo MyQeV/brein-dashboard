@@ -4,11 +4,16 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, asc, desc, select
+from sqlalchemy import and_, asc, delete, desc, select
 from brein import config as brein_config
 from brein.db import get_session_factory
 from brein.integrations.api.sabnzbd import parse_server_stats_daily_timeline
 from brein.models.tables import SabnzbdServerStatsSnapshot
+
+# Hourly JSONB snapshots were never pruned. The daily chart reads the newest
+# payload's own per-day timeline, or falls back to day-over-day deltas of the
+# stored rows, so more than a year of history serves nothing.
+RETENTION_DAYS = 400
 
 
 def _tz() -> ZoneInfo:
@@ -45,6 +50,23 @@ async def insert_snapshot(instance_id: int, payload: dict[str, Any]) -> None:
     async with factory() as s:
         s.add(row)
         await s.commit()
+
+
+async def prune_snapshots(
+    instance_id: int, retention_days: int = RETENTION_DAYS
+) -> int:
+    """Delete this instance's snapshots older than the retention. Returns rows removed."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    factory = get_session_factory()
+    async with factory() as s:
+        result = await s.execute(
+            delete(SabnzbdServerStatsSnapshot).where(
+                SabnzbdServerStatsSnapshot.instance_id == instance_id,
+                SabnzbdServerStatsSnapshot.collected_at < cutoff,
+            )
+        )
+        await s.commit()
+        return result.rowcount or 0
 
 
 async def get_latest_snapshot(

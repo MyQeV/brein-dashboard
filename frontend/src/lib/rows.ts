@@ -17,10 +17,10 @@
 export type ApiRow = Record<string, unknown>;
 
 /** Watch-time value keys, most canonical first. */
-export const SECONDS_KEYS = ["total_seconds", "seconds", "watch_time_seconds"];
+const SECONDS_KEYS = ["total_seconds", "seconds", "watch_time_seconds"];
 
 /** Human-readable name keys, most canonical first. */
-export const LABEL_KEYS = ["label", "display_label", "display_name", "name"];
+const LABEL_KEYS = ["label", "display_label", "display_name", "name"];
 
 /**
  * First key holding a number, else 0. A missing metric is an absent row, not

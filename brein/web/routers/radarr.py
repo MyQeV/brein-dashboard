@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 from brein import cache as brein_cache
 from brein.integrations import radarr as radarr_integration
 from brein.web import auth as web_auth
+from brein.web.dependencies import require_instance_config
 from brein.web.schemas import User
-from brein.store import instances as store_instances
 
 router = APIRouter()
 CurrentUser = Annotated[User, Depends(web_auth.get_current_active_user)]
@@ -56,7 +56,6 @@ RADARR_ALLOWED_COMMANDS = frozenset(
         "RefreshMovie",
         "RenameFiles",
         "RenameMovie",
-        "ResetApiKey",
         "RescanMovie",
         "RefreshCollections",
         "RssSync",
@@ -98,25 +97,12 @@ class RadarrHostConfigPatch(BaseModel):
     sslPort: int | None = None
 
 
-async def _get_radarr_config(instance_id: int):
-    """Resolve instance config; return (base_url, api_key) for Radarr or raise/return None for unsupported."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type != "radarr":
-        raise HTTPException(status_code=400, detail="Not a Radarr instance")
+async def _get_radarr_config(instance_id: int) -> tuple[str, str]:
+    """Resolve instance config; return (base_url, api_key) for Radarr or raise."""
+    _, base_url, api_key = await require_instance_config(
+        instance_id, "radarr", detail="Not a Radarr instance"
+    )
     return base_url, api_key
-
-
-def _radarr_poster_path(img: dict) -> str | None:
-    """Extract poster path from a Radarr image dict. Uses only local url (MediaCover), not remoteUrl."""
-    url = img.get("url") if isinstance(img.get("url"), str) else None
-    if url and url.startswith("/"):
-        return url
-    return None
 
 
 async def _enrich_radarr_records_with_movie(
@@ -126,7 +112,7 @@ async def _enrich_radarr_records_with_movie(
     records: list,
     movie_id_key: str = "movieId",
 ) -> None:
-    """Attach movie {title, year, posterUrl} to each record. Modifies records in place."""
+    """Attach movie {title, year} to each record. Modifies records in place."""
     unique_ids = list(
         {r.get(movie_id_key) for r in records if r.get(movie_id_key) is not None}
     )
@@ -183,7 +169,7 @@ async def api_instance_radarr_collection(instance_id: int, current_user: Current
 
 @router.get("/api/instances/{instance_id}/radarr/queue")
 async def api_instance_radarr_queue(instance_id: int, current_user: CurrentUser):
-    """Return Radarr queue. 400 if not Radarr. Enriched with movie title, year, posterUrl."""
+    """Return Radarr queue. 400 if not Radarr. Enriched with movie title and year."""
     base_url, api_key = await _get_radarr_config(instance_id)
     ok, data = await radarr_integration.get_queue(base_url, api_key)
     if not ok or data is None:
@@ -206,7 +192,7 @@ async def api_instance_radarr_history(
     dateFrom: str = Query(""),
     dateTo: str = Query(""),
 ):
-    """Return Radarr history with optional pagination and filters. 400 if not Radarr. Enriched with movie title, year, posterUrl."""
+    """Return Radarr history with optional pagination and filters. 400 if not Radarr. Enriched with movie title and year."""
     base_url, api_key = await _get_radarr_config(instance_id)
     ok, data = await radarr_integration.get_history(
         base_url,
@@ -415,7 +401,7 @@ async def api_instance_radarr_blocklist(
     page: int = Query(1, ge=1),
     pageSize: int = Query(50, ge=1, le=200),
 ):
-    """Return Radarr blocklist. 400 if not Radarr. Enriched with movie title, year, posterUrl."""
+    """Return Radarr blocklist. 400 if not Radarr. Enriched with movie title and year."""
     base_url, api_key = await _get_radarr_config(instance_id)
     ok, data = await radarr_integration.get_blocklist(
         base_url, api_key, page=page, page_size=pageSize

@@ -18,9 +18,9 @@ from brein.store.metrics_playback import (
     get_user_sessions as _emby_get_user_sessions,
 )
 from brein.store import jellyfin_dashboard_metrics as store_jellyfin_metrics
-from brein.store import jellyfin_users as store_jellyfin_users
 from brein.store import plex_dashboard_metrics as store_plex_metrics
 from brein.web import auth as web_auth
+from brein.web.dependencies import require_instance_config
 from brein.web.schemas import User
 from brein.store import dashboard_insights as store_insights
 from brein.store import instances as store_instances
@@ -78,11 +78,17 @@ def _parse_instance_ids(instance_ids: str | None) -> int | list[int] | None:
     parsed: list[int] = []
     for x in instance_ids.split(","):
         x = x.strip()
-        if x:
-            try:
-                parsed.append(int(x))
-            except ValueError:
-                continue
+        if not x:
+            continue
+        try:
+            parsed.append(int(x))
+        except ValueError:
+            # Not skipped: "1,abc" narrowed to [1] served a filter the caller
+            # never asked for, and only an all-garbage value was refused.
+            raise HTTPException(
+                status_code=400,
+                detail="instance_ids must be comma-separated integers.",
+            ) from None
     if not parsed:
         raise HTTPException(
             status_code=400, detail="instance_ids must be comma-separated integers."
@@ -117,52 +123,6 @@ def _cache_key(
     and whichever ran first served the other its answer for the whole TTL.
     """
     return json.dumps([start_date, end_date, instance_ids, user_ids], sort_keys=True)
-
-
-async def build_dashboard_stats() -> dict[str, Any]:
-    """Return dashboard stats for users (Emby + Jellyfin)."""
-    instances, jellyfin_counts = await asyncio.gather(
-        store_instances.list_instances(),
-        store_jellyfin_users.count_users_by_instance(),
-    )
-    configured = [
-        i for i in instances if i.get("is_configured") and i.get("active", True)
-    ]
-    by_instance_users = [
-        {
-            "instance_id": inst.get("id"),
-            "label": (inst.get("label") or inst.get("id") or ""),
-            "count": jellyfin_counts.get(int(inst["id"]), 0)
-            if (inst.get("service_type") or "") == "jellyfin"
-            and inst.get("id") is not None
-            else 0,
-        }
-        for inst in configured
-        if (inst.get("service_type") or "") in ("emby", "jellyfin")
-    ]
-
-    return {
-        "users": {
-            "total": sum(r["count"] for r in by_instance_users),
-            "by_instance": by_instance_users,
-        },
-    }
-
-
-@router.get("/api/dashboard/stats")
-async def api_dashboard_stats(
-    current_user: CurrentUser,
-    refresh: bool = Query(False, description="Bypass cache and refresh"),
-):
-    """Aggregate user counts (Emby), series/episode counts (Sonarr), movie counts (Radarr). Uses cache unless refresh=1."""
-    if not refresh:
-        cached = await brein_cache.get_cached("dashboard:stats")
-        if cached is not None:
-            return cached
-    data = await build_dashboard_stats()
-    if data is not None:
-        await brein_cache.set_cached("dashboard:stats", data)
-    return data
 
 
 @router.get("/api/dashboard/sessions")
@@ -359,7 +319,6 @@ async def api_dashboard_downloads(current_user: CurrentUser) -> dict:
     Returns raw bytes; formatting is the client's job. This data was only
     reachable by rendering the Jinja downloads fragment.
     """
-    from brein.store import instances as store_instances
     from brein.store import sabnzbd_stats as store_sabnzbd_stats
 
     instances = await store_instances.list_instances()
@@ -406,6 +365,9 @@ async def api_dashboard_downloads_daily(
     """
     from brein.store import sabnzbd_stats as store_sabnzbd_stats
 
+    await require_instance_config(
+        instance_id, "sabnzbd", detail="Not a SABnzbd instance"
+    )
     end = brein_config.get_local_date()
     start = end - timedelta(days=days - 1)
     labels, gigabytes = await store_sabnzbd_stats.get_daily_series_gigabytes(
@@ -455,7 +417,12 @@ async def api_dashboard_idle_users(
     instance_ids: str | None = Query(None),
 ) -> dict[str, Any]:
     """Users who have not played anything for `days`, or ever."""
-    rows = await store_insights.get_idle_users(days, _parse_instance_ids(instance_ids))
+    instance_ids_parsed = _parse_instance_ids(instance_ids)
+    cache_key = f"idle:{_cache_key(str(days), '', instance_ids_parsed, None)}"
+    rows = await brein_cache.get_insight_cached(cache_key)
+    if rows is None:
+        rows = await store_insights.get_idle_users(days, instance_ids_parsed)
+        await brein_cache.set_insight_cached(cache_key, rows)
     return {"days": days, "users": rows}
 
 
@@ -492,9 +459,16 @@ async def api_dashboard_library_unwatched(
 
     items: list[dict[str, Any]] = []
     if item_type:
-        items = await store_insights.get_unwatched_items(
-            item_type, instance_ids_parsed, limit
+        items_key = "unwatched_items:" + _cache_key(
+            item_type.title(), str(limit), instance_ids_parsed, None
         )
+        cached_items = await brein_cache.get_insight_cached(items_key)
+        if cached_items is None:
+            cached_items = await store_insights.get_unwatched_items(
+                item_type, instance_ids_parsed, limit
+            )
+            await brein_cache.set_insight_cached(items_key, cached_items)
+        items = cached_items
     return {"summary": summary, "items": items}
 
 

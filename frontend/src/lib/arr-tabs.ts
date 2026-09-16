@@ -188,7 +188,7 @@ const ARR_SHARED: Record<string, ArrTab> = {
   },
 };
 
-export const ARR_TABS: Record<string, Record<string, ArrTab>> = {
+const ARR_TABS: Record<string, Record<string, ArrTab>> = {
   sonarr: ARR_SHARED,
   radarr: {
     ...ARR_SHARED,
@@ -218,21 +218,64 @@ export const ARR_TABS: Record<string, Record<string, ArrTab>> = {
  *
  * Lives here rather than in the tab page because both the server-rendered
  * table and the selectable client one have to format a row identically — two
- * copies would drift the moment a new kind is added.
+ * copies would drift the moment a new kind is added. `timeZone` is the app
+ * zone, from `appTimeZone()` or `useTimeZone()` depending on the caller.
  */
-export function renderArrCell(row: Record<string, unknown>, column: ArrColumn): string {
+export function renderArrCell(
+  row: Record<string, unknown>,
+  column: ArrColumn,
+  timeZone: string,
+): string {
   const raw = column.path ? readPath(row, column.path) : row[column.key];
   switch (column.kind) {
     case "bytes":
       return formatBytes(typeof raw === "number" ? raw : 0);
     case "date":
-      return formatDateTime(raw);
+      return formatDateTime(raw, timeZone);
     case "boolean":
       return raw ? "Yes" : "No";
     default:
       if (raw === null || raw === undefined || raw === "") return "—";
       return String(raw);
   }
+}
+
+function isArrColumn(value: unknown): value is ArrColumn {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as ArrColumn).key === "string" &&
+    typeof (value as ArrColumn).header === "string"
+  );
+}
+
+/**
+ * A tab a service type declared in its `arr_tables` is data from the API,
+ * not code: check the shape before trusting it, and skip a malformed one
+ * rather than let `columns.map` take the whole route down.
+ */
+function declaredArrTab(
+  value: unknown,
+  serviceType: string,
+  slug: string,
+): ArrTab | undefined {
+  if (value === undefined) return undefined;
+  const tab = value as Partial<ArrTab> | null;
+  const valid =
+    typeof tab === "object" &&
+    tab !== null &&
+    typeof tab.endpoint === "string" &&
+    tab.endpoint !== "" &&
+    typeof tab.title === "string" &&
+    typeof tab.paged === "boolean" &&
+    Array.isArray(tab.columns) &&
+    tab.columns.length > 0 &&
+    tab.columns.every(isArrColumn);
+  if (valid) return tab as ArrTab;
+  console.warn(
+    `Ignoring malformed arr_tables entry ${serviceType}/${slug} from /api/service-types`,
+  );
+  return undefined;
 }
 
 /**
@@ -247,6 +290,6 @@ export function arrTabsFor(
   return (
     EXTRA_ARR_TABS[serviceType]?.[slug] ??
     ARR_TABS[serviceType]?.[slug] ??
-    (types[serviceType]?.arr_tables?.[slug] as ArrTab | undefined)
+    declaredArrTab(types[serviceType]?.arr_tables?.[slug], serviceType, slug)
   );
 }

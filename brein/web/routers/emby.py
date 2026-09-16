@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from brein.integrations import emby as emby_integration
 from brein.integrations.api import jellyfin as jellyfin_integration
-from brein.store import instances as store_instances
 from brein.web import auth as web_auth
+from brein.web.dependencies import require_instance_config
 from brein.web.schemas import (
     BulkStatusRequest,
     UpdateUserRequest,
@@ -20,22 +20,28 @@ AdminUser = Annotated[User, Depends(web_auth.get_current_admin_user)]
 WebUser = Annotated[User, Depends(web_auth.get_current_user_cookie_or_bearer)]
 WebAdmin = Annotated[User, Depends(web_auth.get_current_admin_user_cookie_or_bearer)]
 
+MEDIA_SERVER_TYPES = ("emby", "jellyfin")
+
 
 def _media_integration(service_type: str):
     """Return the right integration module for the given service type."""
     return jellyfin_integration if service_type == "jellyfin" else emby_integration
 
 
+async def _require_media_config(
+    instance_id: int, *, detail: str, status_code: int
+) -> tuple[str, str, str]:
+    """An Emby or Jellyfin instance with a connection, or the route's own error."""
+    return await require_instance_config(
+        instance_id, MEDIA_SERVER_TYPES, detail=detail, status_code=status_code
+    )
+
+
 @router.get("/api/instances/{instance_id}/users")
 async def api_instance_users(instance_id: int, current_user: AdminUser):
     """List users and libraries for Emby/Jellyfin instance. Unsupported types return supported: false."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type not in ("emby", "jellyfin"):
+    service_type, base_url, api_key = await require_instance_config(instance_id)
+    if service_type not in MEDIA_SERVER_TYPES:
         return {"supported": False}
     integration = _media_integration(service_type)
     ok_users, raw_users = await integration.get_users(base_url, api_key)
@@ -99,13 +105,8 @@ async def api_instance_users(instance_id: int, current_user: AdminUser):
 @router.get("/api/instances/{instance_id}/libraries")
 async def api_instance_libraries(instance_id: int, current_user: AdminUser):
     """List SelectableMediaFolders for Emby instance. Unsupported types return supported: false."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type not in ("emby", "jellyfin"):
+    service_type, base_url, api_key = await require_instance_config(instance_id)
+    if service_type not in MEDIA_SERVER_TYPES:
         return {"supported": False}
     ok_folders, raw_folders = await _media_integration(service_type).get_media_folders(
         base_url, api_key
@@ -133,14 +134,9 @@ async def api_instance_users_policy(
     instance_id: int, body: UsersPolicyBody, current_user: AdminUser
 ):
     """Bulk update library access for selected users (Emby only)."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type not in ("emby", "jellyfin"):
-        raise HTTPException(status_code=404, detail="Not supported for this app")
+    service_type, base_url, api_key = await _require_media_config(
+        instance_id, detail="Not supported for this app", status_code=404
+    )
     if not body.user_ids:
         raise HTTPException(status_code=400, detail="user_ids required")
     updated = 0
@@ -165,18 +161,15 @@ async def api_instance_user_detail(
     instance_id: int, user_id: str, current_user: AdminUser
 ):
     """Return full user details for Emby (for user detail view)."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type not in ("emby", "jellyfin"):
-        raise HTTPException(status_code=404, detail="Not supported for this app")
+    service_type, base_url, api_key = await _require_media_config(
+        instance_id, detail="Not supported for this app", status_code=404
+    )
     ok, user = await _media_integration(service_type).get_user_by_id(
         base_url, api_key, user_id
     )
-    if not ok or not user:
+    if not ok:
+        raise HTTPException(status_code=502, detail="Failed to fetch user")
+    if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
@@ -188,21 +181,20 @@ async def api_instance_activitylog(
     limit: int = Query(50, ge=1, le=200),
     start_index: int = Query(0, ge=0),
 ):
-    """Return Emby ActivityLog entries for the instance. 404 if not Emby."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type not in ("emby", "jellyfin"):
-        raise HTTPException(status_code=404, detail="Not supported for this app")
+    """Return Emby ActivityLog entries for the instance. 404 if not Emby.
+
+    `count` is the size of this page: the client drops the server's
+    TotalRecordCount, so the number of entries overall is not known here.
+    """
+    service_type, base_url, api_key = await _require_media_config(
+        instance_id, detail="Not supported for this app", status_code=404
+    )
     ok, items = await _media_integration(service_type).get_activity_log_entries(
         base_url, api_key, limit=limit, start_index=start_index
     )
     if not ok:
         raise HTTPException(status_code=502, detail="Failed to fetch activity log")
-    return {"items": items, "total": len(items)}
+    return {"items": items, "count": len(items)}
 
 
 @router.post("/api/instances/{instance_id}/users/bulk-status")
@@ -210,14 +202,9 @@ async def api_instance_users_bulk_status(
     instance_id: int, body: BulkStatusRequest, current_user: AdminUser
 ):
     """Bulk set active/inactive for selected Emby users."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type not in ("emby", "jellyfin"):
-        raise HTTPException(status_code=404, detail="Not supported for this app")
+    service_type, base_url, api_key = await _require_media_config(
+        instance_id, detail="Not supported for this app", status_code=404
+    )
     if not body.user_ids:
         raise HTTPException(status_code=400, detail="user_ids required")
     updated = 0
@@ -238,14 +225,9 @@ async def api_instance_user_update(
     instance_id: int, user_id: str, body: UpdateUserRequest, current_user: AdminUser
 ):
     """Update Emby user info (name, password, policy fields)."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type not in ("emby", "jellyfin"):
-        raise HTTPException(status_code=404, detail="Not supported for this app")
+    service_type, base_url, api_key = await _require_media_config(
+        instance_id, detail="Not supported for this app", status_code=404
+    )
     if body.name is not None:
         ok, msg = await _media_integration(service_type).update_user(
             base_url, api_key, user_id, body.name
@@ -303,14 +285,9 @@ async def api_instance_user_update(
 @router.get("/api/instances/{instance_id}/media/ping")
 async def api_instance_media_ping(instance_id: int, current_user: WebUser):
     """Lightweight reachability check (GET System/Info)."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type not in ("emby", "jellyfin"):
-        raise HTTPException(status_code=400, detail="Not an Emby or Jellyfin instance")
+    service_type, base_url, api_key = await _require_media_config(
+        instance_id, detail="Not an Emby or Jellyfin instance", status_code=400
+    )
     ok, message = await _media_integration(service_type).test_connection(
         base_url, api_key
     )
@@ -320,14 +297,9 @@ async def api_instance_media_ping(instance_id: int, current_user: WebUser):
 @router.post("/api/instances/{instance_id}/media/system/restart")
 async def api_instance_media_system_restart(instance_id: int, current_user: WebAdmin):
     """POST System/Restart on Emby or Jellyfin. Admin only."""
-    cfg = await store_instances.get_instance_connection_config(instance_id)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Instance not found")
-    service_type, base_url, api_key = cfg
-    if not base_url or not api_key:
-        raise HTTPException(status_code=400, detail="Configure host and API key first")
-    if service_type not in ("emby", "jellyfin"):
-        raise HTTPException(status_code=400, detail="Not an Emby or Jellyfin instance")
+    service_type, base_url, api_key = await _require_media_config(
+        instance_id, detail="Not an Emby or Jellyfin instance", status_code=400
+    )
     ok, msg = await _media_integration(service_type).post_system_restart(
         base_url, api_key
     )

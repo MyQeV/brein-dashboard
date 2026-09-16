@@ -2,10 +2,10 @@ import type { Metadata } from "next";
 import { StatTile } from "@/components/charts/stat-tile";
 import { DataTable } from "@/components/data-table";
 import { Card } from "@/components/ui/card";
-import { apiFetch, softApiFetch } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { formatCount } from "@/lib/format";
+import { fetchInstances } from "@/lib/instances-server";
 import { buildQuery, firstParam } from "@/lib/params";
-import type { Instance } from "@/lib/types";
 import { InstanceFilter } from "../instance-filter";
 import { UnwatchedItems } from "./unwatched-items";
 
@@ -40,14 +40,8 @@ export default async function LibraryPage(props: PageProps<"/dashboard/library">
     `/api/dashboard/library-unwatched${query}`,
   );
 
-  const instancesResult = await softApiFetch<{ instances: Instance[] } | Instance[]>(
-    "/api/instances",
-  );
-  const instanceRows = instancesResult.ok
-    ? Array.isArray(instancesResult.data)
-      ? instancesResult.data
-      : (instancesResult.data.instances ?? [])
-    : [];
+  // The same request the app layout's sidebar made, deduped by `cache`.
+  const instanceRows = await fetchInstances();
   const instances = instanceRows
     .filter((row) => MEDIA_SERVER_TYPES.has((row.service_type ?? "").toLowerCase()))
     .map((row) => ({ id: row.id, label: row.label ?? `Instance ${row.id}` }));

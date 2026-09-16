@@ -9,9 +9,11 @@ from sqlalchemy import text
 from brein import config as brein_config
 from brein.db import get_session_factory
 from brein.store.metrics_helpers import (
+    _LIVE_TV_SQL,
     _UTC_TEXT_WINDOW,
     _instance_filter,
     _local_date_expr,
+    _snapshot_since_params,
     _user_instance_filter,
     _utc_window_params,
 )
@@ -21,10 +23,15 @@ log = logging.getLogger(__name__)
 _rebuild_lock = asyncio.Lock()
 
 
-async def rebuild_snapshots(instance_id: int | None = None) -> None:
-    """Delete and re-populate the three snapshot tables from sessions + items + users.
+async def rebuild_snapshots(
+    instance_id: int | None = None, since_date: str | None = None
+) -> None:
+    """Re-populate the three snapshot tables from sessions + items + users.
 
-    Serialized via _rebuild_lock so concurrent callers don't race on
+    With ``since_date`` (a local YYYY-MM-DD stat_date) only that day and later
+    are deleted and re-aggregated; without it every row is. The three tables
+    share one bound and one transaction, so they never disagree with each
+    other. Serialized via _rebuild_lock so concurrent callers don't race on
     DELETE/INSERT and trip a unique-violation.
     """
     async with _rebuild_lock, get_session_factory()() as session:
@@ -33,15 +40,26 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
 
         inst_filter = ""
         inst_params: dict[str, Any] = {}
+        del_where: list[str] = []
         if instance_id is not None:
             inst_filter = " AND s.instance_id = :instance_id"
             inst_params = {"instance_id": instance_id}
+            del_where.append("instance_id = :instance_id")
 
-        inst_del_filter = ""
-        inst_del_params: dict[str, Any] = {}
-        if instance_id is not None:
-            inst_del_filter = " WHERE instance_id = :instance_id"
-            inst_del_params = {"instance_id": instance_id}
+        # The raw-text prefilter lets the start_time index prune the scan; the
+        # local-date predicate decides, and matches the DELETE's bound exactly.
+        since_filter = ""
+        since_params: dict[str, Any] = {}
+        if since_date:
+            since_filter = f" AND s.start_time >= :since_lo AND {ld} >= :since_date"
+            since_params = _snapshot_since_params(since_date)
+            del_where.append("stat_date >= :since_date")
+
+        inst_del_filter = (" WHERE " + " AND ".join(del_where)) if del_where else ""
+        inst_del_params: dict[str, Any] = {**inst_params}
+        if since_date:
+            inst_del_params["since_date"] = since_date
+        sel_params: dict[str, Any] = {"tz": tz, **inst_params, **since_params}
 
         # --- emby_metrics_snapshot (daily totals) ---
         await session.execute(
@@ -61,15 +79,15 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
                     COALESCE(SUM(s.duration_seconds), 0) AS total_watch_time_seconds,
                     SUM(CASE WHEN i.type = 'Movie' THEN 1 ELSE 0 END) AS total_movies,
                     SUM(CASE WHEN i.type = 'Episode' THEN 1 ELSE 0 END) AS total_episodes,
-                    SUM(CASE WHEN i.type IN ('LiveTvChannel','Program') THEN 1 ELSE 0 END) AS total_live_tv
+                    SUM(CASE WHEN i.type IN {_LIVE_TV_SQL} THEN 1 ELSE 0 END) AS total_live_tv
                 FROM emby_playback_sessions s
                 LEFT JOIN emby_items i
                     ON i.instance_id = s.instance_id AND i.item_id = CAST(s.item_id AS TEXT)
-                WHERE 1=1 {inst_filter}
+                WHERE 1=1 {inst_filter}{since_filter}
                 GROUP BY {ld}, s.instance_id
                 """
             ),
-            {"tz": tz, **inst_params},
+            sel_params,
         )
 
         # --- emby_metrics_snapshot_user (daily per-user) ---
@@ -93,11 +111,12 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
                 LEFT JOIN emby_users u
                     ON u.instance_id = s.instance_id
                    AND u.user_item_id = CAST(s.user_id AS TEXT)
-                WHERE 1=1 {inst_filter}
+                   AND u.is_deleted = 0
+                WHERE 1=1 {inst_filter}{since_filter}
                 GROUP BY {ld}, s.instance_id, s.user_id, u.name
                 """
             ),
-            {"tz": tz, **inst_params},
+            sel_params,
         )
 
         # --- emby_metrics_snapshot_item (daily per-item, denormalized) ---
@@ -134,26 +153,27 @@ async def rebuild_snapshots(instance_id: int | None = None) -> None:
                 LEFT JOIN emby_items series_item
                     ON series_item.instance_id = i.instance_id
                    AND series_item.item_id = i.series_id
-                WHERE 1=1 {inst_filter}
+                WHERE 1=1 {inst_filter}{since_filter}
                 GROUP BY {ld}, s.instance_id, s.item_id,
                          i.name, i.type, i.series_id, series_item.name
                 """
             ),
-            {"tz": tz, **inst_params},
+            sel_params,
         )
 
         await session.commit()
         log.info(
-            "Dashboard snapshots rebuilt%s",
+            "Dashboard snapshots rebuilt%s%s",
             f" for instance_id={instance_id}" if instance_id is not None else "",
+            f" since {since_date}" if since_date else "",
         )
 
 
-_EMBY_MEDIA_TYPE_CASE = """
+_EMBY_MEDIA_TYPE_CASE = f"""
                 CASE
                   WHEN i.type = 'Movie' THEN 'Movie'
                   WHEN i.type = 'Episode' THEN 'Episode'
-                  WHEN i.type IN ('LiveTvChannel', 'TvChannel', 'Program') THEN 'LiveTV'
+                  WHEN i.type IN {_LIVE_TV_SQL} THEN 'LiveTV'
                   WHEN i.type = 'Audio' THEN 'Audio'
                   ELSE 'Other'
                 END
