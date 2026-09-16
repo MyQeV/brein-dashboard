@@ -62,7 +62,8 @@ if ($MountSource) {
 $args += @(
     "-v", "${Repo}\requirements-dev.txt:/app/requirements-dev.txt:ro",
     "-w", "/app",
-    "${Project}-${Project}",
+    # The image compose built for the `brein` service, whatever the project name.
+    "${Project}-brein",
     # pytest is not in the runtime image: shipping test dependencies to
     # production was the point of splitting the requirements. uv is already
     # there, so installing them here costs a couple of seconds.
