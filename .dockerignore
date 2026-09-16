@@ -21,6 +21,8 @@ __pycache__
 
 # Test & cache artifacts
 .pytest_cache
+.mypy_cache
+.ruff_cache
 
 # Editor configs
 .idea
@@ -34,10 +36,12 @@ __pycache__
 todo
 redis/
 scripts/
-tests/
 docs/
 .claude/
 .worktrees/
+.superpowers/
+.secrets.baseline
+
 
 # The frontend builds from its own Dockerfile; without this a local
 # `pnpm install` ships node_modules into the API image.
