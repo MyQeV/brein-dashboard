@@ -1,93 +1,172 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CONTROL_HEIGHT } from "@/components/ui/control";
+import {
+  type Period,
+  periodOf,
+  periodToDate,
+  shiftRange,
+  todayIn,
+} from "@/lib/calendar-range";
+import { useTimeZone } from "@/lib/timezone-context";
 
-/** Matches the old dashboard's preset row exactly. */
-const PRESETS = [
-  { label: "Today", days: 0 },
-  { label: "7d", days: 7 },
-  { label: "14d", days: 14 },
-  { label: "30d", days: 30 },
-  { label: "Year", days: 365 },
-  { label: "All", days: "all" as const },
+type PresetKey = "today" | Period | "all";
+
+/**
+ * Calendar periods, not rolling day counts: "Week" runs from Monday and
+ * "Month" from the 1st, so the numbers line up with how people talk about
+ * them. Each ends today — the future has nothing to show. The hints feed
+ * the info popover.
+ */
+const PRESETS: { key: PresetKey; label: string; hint: string }[] = [
+  { key: "today", label: "Today", hint: "The current day." },
+  { key: "week", label: "Week", hint: "This week so far, from Monday." },
+  { key: "month", label: "Month", hint: "This month so far, from the 1st." },
+  { key: "year", label: "Year", hint: "This year so far, from 1 January." },
+  { key: "all", label: "All", hint: "Everything on record." },
 ];
-
-/** Tabs whose pages default to today when the URL carries no dates. */
-const TODAY_BY_DEFAULT = new Set([
-  "/dashboard",
-  "/dashboard/movies",
-  "/dashboard/series",
-]);
 
 /** The floor the old dashboard sent for "All"; predates any playback data. */
 const ALL_START_DATE = "2000-01-01";
 
 const DATE_INPUT = `${CONTROL_HEIGHT.sm} min-w-0 flex-1 rounded-md border border-border bg-surface px-2 text-sm max-lg:px-1 max-lg:[&::-webkit-calendar-picker-indicator]:hidden lg:flex-none`;
 
-function isoDaysBefore(endDate: string, days: number): string {
-  const end = new Date(`${endDate}T00:00:00Z`);
-  const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - days);
-  return start.toISOString().slice(0, 10);
-}
-
-function shiftIso(date: string, days: number): string {
-  const value = new Date(`${date}T00:00:00Z`);
-  value.setUTCDate(value.getUTCDate() + days);
-  return value.toISOString().slice(0, 10);
-}
-
-/** Inclusive length of a range, in days. */
-function spanDays(startDate: string, endDate: string): number {
-  const start = new Date(`${startDate}T00:00:00Z`).getTime();
-  const end = new Date(`${endDate}T00:00:00Z`).getTime();
-  if (Number.isNaN(start) || Number.isNaN(end)) return -1;
-  return Math.round((end - start) / 86_400_000) + 1;
+/** What each preset covers, anchored on today in the app zone. */
+function presetRanges(today: string): Record<PresetKey, { start: string; end: string }> {
+  return {
+    today: { start: today, end: today },
+    week: periodToDate("week", today),
+    month: periodToDate("month", today),
+    year: periodToDate("year", today),
+    // The API has no "all" mode: with no dates it falls back to the last
+    // seven days, which made "All" report *less* than "Year". Send the same
+    // floor the old dashboard used instead.
+    all: { start: ALL_START_DATE, end: today },
+  };
 }
 
 /**
- * Which preset, if any, the current range *is* — for when the URL no longer
- * says. Returns "" when it matches none, which leaves every button unpressed
- * rather than lighting one at random.
+ * Which preset the current range *is*. Exact matches only: a past week is
+ * not "Week", which promises the current one, so it lights nothing rather
+ * than something misleading. Presets that cover the same days — "Today" and
+ * "Week" on a Monday — are told apart by `period`, the one the URL says was
+ * chosen.
  */
 function matchPreset(
+  ranges: Record<PresetKey, { start: string; end: string }>,
   startDate: string,
   endDate: string,
-  todayByDefault: boolean,
-): string {
+  period: Period | null,
+): PresetKey | "" {
   if (startDate <= ALL_START_DATE) return "all";
-  const span = spanDays(startDate, endDate);
-  if (span === 1) return todayByDefault ? "0" : "";
-  const preset = PRESETS.find(
-    (option) => typeof option.days === "number" && option.days === span,
-  );
-  return preset ? String(preset.days) : "";
+  const covers = (key: PresetKey) =>
+    ranges[key].start === startDate && ranges[key].end === endDate;
+  if (period && covers(period)) return period;
+  const match = PRESETS.find(({ key }) => covers(key));
+  return match ? match.key : "";
 }
 
-/**
- * Presets are computed from the range the server reports, not from the
- * browser's clock: the API works in the app timezone, and around midnight the
- * two disagree by a day.
- */
+/** The ⓘ beside the presets: what each one covers, and what ‹ › do. */
+function PresetHelp() {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative shrink-0">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label="What the presets cover"
+        aria-expanded={open}
+        aria-controls="preset-help"
+        onClick={() => setOpen((value) => !value)}
+        className={`${CONTROL_HEIGHT.sm} grid aspect-square place-items-center rounded-md text-muted hover:text-text`}
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <circle cx="10" cy="10" r="8" />
+          <path d="M10 9v5M10 6.2v.3" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          id="preset-help"
+          className="absolute right-0 z-(--z-dropdown) mt-2 w-72 rounded-lg border border-border bg-surface p-3 text-sm shadow-(--shadow-elevated)"
+        >
+          <dl className="flex flex-col gap-1.5">
+            {PRESETS.map((preset) => (
+              <div key={preset.key} className="flex gap-2">
+                <dt className="w-12 shrink-0 font-medium">{preset.label}</dt>
+                <dd className="text-muted">{preset.hint}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-3 text-muted">
+            ‹ and › step to the previous or next period of the same kind, never past
+            today. Dates follow the app's time zone.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function DateRange({
   startDate,
   endDate,
+  period: periodHint,
 }: {
   startDate: string;
   endDate: string;
+  /** The `period` the URL carries: which preset picked these dates, if one did. */
+  period: Period | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  // `days` is deleted whenever the range stops being a preset — a typed date,
-  // or a step with ‹/›. Falling straight back to the tab's default then lit
-  // "Today" over a month-long custom range. The URL wins when it has a
-  // preset; otherwise the range itself decides, and an unrecognised span
-  // lights nothing.
-  const active =
-    params.get("days") ?? matchPreset(startDate, endDate, TODAY_BY_DEFAULT.has(pathname));
+  const timeZone = useTimeZone();
+  // Today in the app zone, as the API resolves it: the browser's own clock
+  // disagrees by a day around midnight and would light the wrong preset.
+  const today = todayIn(timeZone);
+  const ranges = presetRanges(today);
+  // The calendar period the range is, if any. The dates alone cannot tell a
+  // Monday on its own from the week so far, so the URL's word settles it.
+  const period = periodOf(startDate, endDate, today, periodHint);
+  const active = matchPreset(ranges, startDate, endDate, period);
+  // Null once the range ends today: the future is out of bounds, so › is off.
+  const nextRange = shiftRange(startDate, endDate, 1, today, period);
 
   /** Preserves instance and user filters, which live in the same URL. */
   function push(next: Record<string, string | undefined>) {
@@ -99,31 +178,26 @@ export function DateRange({
     router.push(`${pathname}?${query.toString()}`);
   }
 
-  function applyPreset(days: number | "all") {
-    if (days === "all") {
-      // The API has no "all" mode: with no dates it falls back to the last
-      // seven days, which made "All" report *less* than "Year". Send the same
-      // floor the old dashboard used instead.
-      push({ days: "all", start_date: ALL_START_DATE, end_date: endDate });
-      return;
-    }
+  /** A hand-picked date is whatever it is: the preset's word no longer holds. */
+  function pickDate(next: { start_date: string } | { end_date: string }) {
+    push({ ...next, period: undefined });
+  }
+
+  function applyPreset(key: PresetKey) {
+    const range = ranges[key];
     push({
-      days: String(days),
-      start_date: isoDaysBefore(endDate, days === 0 ? 0 : days - 1),
-      end_date: endDate,
+      start_date: range.start,
+      end_date: range.end,
+      period: key === "today" || key === "all" ? undefined : key,
     });
   }
 
-  /** Steps the window by its own length, so "previous" means the prior period. */
+  /** Steps to the neighbouring period: last month, not the 31 days before it. */
   function shiftPeriod(direction: -1 | 1) {
-    const start = new Date(`${startDate}T00:00:00Z`).getTime();
-    const end = new Date(`${endDate}T00:00:00Z`).getTime();
-    const span = Math.round((end - start) / 86_400_000) + 1;
-    push({
-      start_date: shiftIso(startDate, direction * span),
-      end_date: shiftIso(endDate, direction * span),
-      days: undefined,
-    });
+    const range =
+      direction === 1 ? nextRange : shiftRange(startDate, endDate, -1, today, period);
+    if (range)
+      push({ start_date: range.start, end_date: range.end, period: period ?? undefined });
   }
 
   return (
@@ -147,7 +221,8 @@ export function DateRange({
           type="date"
           aria-label="Start date"
           value={startDate}
-          onChange={(event) => push({ start_date: event.target.value, days: undefined })}
+          max={endDate < today ? endDate : today}
+          onChange={(event) => pickDate({ start_date: event.target.value })}
           className={DATE_INPUT}
         />
         <span className="text-muted max-lg:hidden">–</span>
@@ -155,7 +230,9 @@ export function DateRange({
           type="date"
           aria-label="End date"
           value={endDate}
-          onChange={(event) => push({ end_date: event.target.value, days: undefined })}
+          min={startDate}
+          max={today}
+          onChange={(event) => pickDate({ end_date: event.target.value })}
           className={DATE_INPUT}
         />
 
@@ -163,27 +240,29 @@ export function DateRange({
           size="sm"
           variant="secondary"
           aria-label="Next period"
+          disabled={nextRange === null}
           onClick={() => shiftPeriod(1)}
         >
           ›
         </Button>
       </div>
 
-      {/* The six presets fill a row of their own on a phone. */}
-      <fieldset className="flex w-full gap-1 border-0 p-0 lg:w-auto">
+      {/* The presets and their ⓘ fill a row of their own on a phone. */}
+      <fieldset className="flex w-full items-center gap-1 border-0 p-0 lg:w-auto">
         <legend className="sr-only">Date range presets</legend>
         {PRESETS.map((preset) => (
           <Button
-            key={String(preset.days)}
+            key={preset.key}
             size="sm"
-            variant={active === String(preset.days) ? "primary" : "ghost"}
-            aria-pressed={active === String(preset.days)}
-            onClick={() => applyPreset(preset.days)}
+            variant={active === preset.key ? "primary" : "ghost"}
+            aria-pressed={active === preset.key}
+            onClick={() => applyPreset(preset.key)}
             className="flex-1 max-lg:px-2 lg:flex-none"
           >
             {preset.label}
           </Button>
         ))}
+        <PresetHelp />
       </fieldset>
 
       <Button size="sm" variant="secondary" onClick={() => router.refresh()}>

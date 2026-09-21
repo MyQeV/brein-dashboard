@@ -1,4 +1,5 @@
 import { apiFetch, softApiFetch } from "@/lib/api";
+import { type Period, parsePeriod } from "@/lib/calendar-range";
 import { fetchInstances } from "@/lib/instances-server";
 import { buildQuery, firstParam, type SearchParams } from "@/lib/params";
 import { previousRange } from "@/lib/previous-range";
@@ -35,6 +36,8 @@ export type MetricsPageData = {
   metrics: MediaMetrics;
   /** The window before this one, for the deltas; null when it cannot be compared. */
   previous: MediaMetrics | null;
+  /** The calendar period the URL says the range is, for when the dates alone cannot tell. */
+  period: Period | null;
   /** The filter query string, for the drill-downs to reuse. */
   query: string;
   /** The current server filter, for cards that fetch for themselves. */
@@ -49,6 +52,7 @@ export async function loadMetricsPage(
 ): Promise<MetricsPageData> {
   const startDate = firstParam(searchParams.start_date) ?? today();
   const endDate = firstParam(searchParams.end_date) ?? today();
+  const period = parsePeriod(firstParam(searchParams.period));
   const instanceIds = firstParam(searchParams.instance_ids);
   const userIds = firstParam(searchParams.user_ids);
 
@@ -61,7 +65,9 @@ export async function loadMetricsPage(
 
   // The same span, ending the day before. Soft: a failed comparison fetch
   // must not take the page down with it.
-  const before = options.withPrevious ? previousRange(startDate, endDate) : null;
+  const before = options.withPrevious
+    ? previousRange(startDate, endDate, today(), period)
+    : null;
   const [metrics, previousResult] = await Promise.all([
     apiFetch<MediaMetrics>(`/api/dashboard/media-metrics${query}`),
     before
@@ -118,18 +124,19 @@ export async function loadMetricsPage(
     })
     .filter((user): user is { id: string; name: string } => user !== null);
 
-  return { metrics, previous, query, instanceIds, instances, users };
+  return { metrics, previous, period, query, instanceIds, instances, users };
 }
 
 /** Title, resolved range and the filter controls, above whichever view follows. */
 export function MetricsPageHeader({
   title,
   metrics,
+  period,
   instances,
   users,
 }: {
   title: string;
-} & Pick<MetricsPageData, "metrics" | "instances" | "users">) {
+} & Pick<MetricsPageData, "metrics" | "period" | "instances" | "users">) {
   return (
     <>
       <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
@@ -139,7 +146,11 @@ export function MetricsPageHeader({
             {metrics.start_date} to {metrics.end_date} ({metrics.app_timezone})
           </p>
         </div>
-        <DateRange startDate={metrics.start_date} endDate={metrics.end_date} />
+        <DateRange
+          startDate={metrics.start_date}
+          endDate={metrics.end_date}
+          period={period}
+        />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">

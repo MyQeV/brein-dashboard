@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { apiFetch } from "@/lib/api";
+import { parsePeriod, periodToDate, todayIn } from "@/lib/calendar-range";
 import { buildQuery, firstParam } from "@/lib/params";
 import { appTimeZone } from "@/lib/timezone";
 import type { MediaMetrics } from "@/lib/types";
@@ -8,29 +9,22 @@ import { DailyView } from "./daily-view";
 
 export const metadata: Metadata = { title: "Daily" };
 
-/**
- * Today in the app's zone — the same TZ the API runs on (docker-compose.yml
- * passes it to both).
- */
-function today(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: appTimeZone() });
-}
-
-function daysBefore(iso: string, days: number): string {
-  const value = new Date(`${iso}T00:00:00Z`);
-  value.setUTCDate(value.getUTCDate() - days);
-  return value.toISOString().slice(0, 10);
-}
-
 export default async function DailyPage(props: PageProps<"/dashboard/daily">) {
   const searchParams = await props.searchParams;
-  // The old Daily tab defaulted to a week, not to today. Sent explicitly: the
-  // API's no-dates fallback is today-7, which is eight inclusive days, while
-  // the range bar shows 7d pressed — so clicking 7d dropped the first column.
-  const end = firstParam(searchParams.end_date) ?? today();
+  // The Daily tab opens on a week, not on today. Sent explicitly, and as the
+  // same Monday-to-today range the "Week" preset sends, so the preset shows
+  // pressed and clicking it changes nothing. Today is taken in the app's
+  // zone — the same TZ the API runs on (docker-compose.yml passes it to both).
+  const startDate = firstParam(searchParams.start_date);
+  const endDate = firstParam(searchParams.end_date);
+  const week = periodToDate("week", todayIn(appTimeZone()));
+  // On a Monday the week so far is one day, which the dates alone would
+  // call "Today": the default is a week and says so.
+  const period =
+    startDate || endDate ? parsePeriod(firstParam(searchParams.period)) : "week";
   const query = buildQuery({
-    start_date: firstParam(searchParams.start_date) ?? daysBefore(end, 6),
-    end_date: end,
+    start_date: startDate ?? week.start,
+    end_date: endDate ?? week.end,
     instance_ids: firstParam(searchParams.instance_ids),
     user_ids: firstParam(searchParams.user_ids),
   });
@@ -46,7 +40,11 @@ export default async function DailyPage(props: PageProps<"/dashboard/daily">) {
             {metrics.start_date} to {metrics.end_date} ({metrics.app_timezone})
           </p>
         </div>
-        <DateRange startDate={metrics.start_date} endDate={metrics.end_date} />
+        <DateRange
+          startDate={metrics.start_date}
+          endDate={metrics.end_date}
+          period={period}
+        />
       </div>
       <DailyView metrics={metrics} />
     </div>
