@@ -18,10 +18,10 @@ const TABS = [
  * The filters the tabs share, carried from one to the next. A bare tab link
  * reopened every tab on its default range, so Watch time → Movies → Daily
  * silently dropped the month the user had picked. Named as the pages read
- * them (`firstParam(searchParams.start_date)` and so on); `days` is left
- * out because the range bar derives the preset from the dates.
+ * them (`firstParam(searchParams.start_date)` and so on); `period` rides
+ * along because the dates alone cannot tell "Week" from "Today" on a Monday.
  */
-const CARRIED_PARAMS = ["start_date", "end_date", "instance_ids", "user_ids"];
+const CARRIED_PARAMS = ["start_date", "end_date", "period", "instance_ids", "user_ids"];
 
 export function DashboardNav() {
   const pathname = usePathname();

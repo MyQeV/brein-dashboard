@@ -5,7 +5,7 @@ import { SeriesView } from "./series-view";
 export const metadata: Metadata = { title: "Series" };
 
 export default async function SeriesPage(props: PageProps<"/dashboard/series">) {
-  const { metrics, query, instances, users } = await loadMetricsPage(
+  const { metrics, period, query, instances, users } = await loadMetricsPage(
     await props.searchParams,
   );
 
@@ -14,6 +14,7 @@ export default async function SeriesPage(props: PageProps<"/dashboard/series">) 
       <MetricsPageHeader
         title="Series"
         metrics={metrics}
+        period={period}
         instances={instances}
         users={users}
       />

@@ -11,10 +11,12 @@ import { StackedBar, type StackedDatum } from "@/components/charts/stacked-bar";
 import { StatTile } from "@/components/charts/stat-tile";
 import { DrillModal, type DrillTarget } from "@/components/drill-modal";
 import { Card } from "@/components/ui/card";
+import { type Period, periodOf, todayIn } from "@/lib/calendar-range";
 import { cn } from "@/lib/cn";
 import { formatCount, formatDuration, weekdayLabel } from "@/lib/format";
 import { watchTimePerDay } from "@/lib/per-day";
 import { type ApiRow, rowNumber, rowText } from "@/lib/rows";
+import { useTimeZone } from "@/lib/timezone-context";
 import type { MediaMetrics } from "@/lib/types";
 import { ConcurrencyTile, IdleUsersCard, MostPlayedCard } from "./insights";
 import { KpiModal, type KpiTarget } from "./kpi-modal";
@@ -39,22 +41,34 @@ function spanDays(metrics: MediaMetrics): number {
 export function WatchtimeView({
   metrics,
   previous,
+  period: periodHint,
   query,
   instanceIds,
 }: {
   metrics: MediaMetrics;
   /** The window before this one; null when there is nothing to compare with. */
   previous: MediaMetrics | null;
+  /** The calendar period the URL says the range is, when the dates alone cannot tell. */
+  period: Period | null;
   query: string;
   /** The server filter, so the cards that fetch for themselves can honour it. */
   instanceIds?: string;
 }) {
   const [drill, setDrill] = useState<DrillTarget | null>(null);
   const [kpi, setKpi] = useState<KpiTarget | null>(null);
+  const timeZone = useTimeZone();
 
   const multiDay = metrics.start_date !== metrics.end_date;
   const days = spanDays(metrics);
-  const deltaLabel = `vs previous ${days === 1 ? "day" : `${days} days`}`;
+  // A month is compared with the month before it, not with the same number
+  // of days, so the label says which.
+  const period = periodOf(
+    metrics.start_date,
+    metrics.end_date,
+    todayIn(timeZone),
+    periodHint,
+  );
+  const deltaLabel = `vs previous ${period ?? (days === 1 ? "day" : `${days} days`)}`;
   const delta = (
     current: number,
     pick: (m: MediaMetrics) => number,

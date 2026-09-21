@@ -5,7 +5,7 @@ import { MoviesView } from "./movies-view";
 export const metadata: Metadata = { title: "Movies" };
 
 export default async function MoviesPage(props: PageProps<"/dashboard/movies">) {
-  const { metrics, query, instances, users } = await loadMetricsPage(
+  const { metrics, period, query, instances, users } = await loadMetricsPage(
     await props.searchParams,
   );
 
@@ -14,6 +14,7 @@ export default async function MoviesPage(props: PageProps<"/dashboard/movies">) 
       <MetricsPageHeader
         title="Movies"
         metrics={metrics}
+        period={period}
         instances={instances}
         users={users}
       />
