@@ -5,6 +5,7 @@ import type { Instance, User } from "@/lib/types";
 import { MobileNav } from "./mobile-nav";
 import { Sidebar } from "./sidebar";
 import { ThemePicker } from "./theme-picker";
+import { UserMenu } from "./user-menu";
 
 export function Shell({
   user,
@@ -44,12 +45,7 @@ export function Shell({
                 </Link>
               )}
               <ThemePicker />
-              <Link
-                href="/profile"
-                className="rounded-md px-2 py-1.5 text-sm text-muted hover:text-text"
-              >
-                {user?.username ?? "—"}
-              </Link>
+              <UserMenu user={user} />
             </div>
           </header>
           <main className="min-w-0 flex-1 overflow-auto p-4 lg:p-6">{children}</main>
