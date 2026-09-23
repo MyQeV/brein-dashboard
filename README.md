@@ -19,7 +19,7 @@ Most charts and KPI's are clickable to show more data in a modal.
 ### Now playing
 Real-time playback state pushed to the UI. Updates every 10
 seconds.
-<img width="1901" height="331" alt="image" src="https://github.com/user-attachments/assets/045603c9-4018-4b92-9b18-602d7f7bcd77" />
+<img width="1900" height="781" alt="image" src="https://github.com/user-attachments/assets/3b383a7f-8bf6-4460-b5e2-ef38302c89b9" />
 
 Name and server badge are clickable and open the instance in a new browser tab.
 
