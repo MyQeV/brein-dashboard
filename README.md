@@ -17,15 +17,11 @@ Most charts and KPI's are clickable to show more data in a modal.
 <img width="1693" height="301" alt="image" src="https://github.com/user-attachments/assets/d8be9306-c0e2-4b3e-bcff-61726f24f8f4" />
 
 ### Now playing
-Real-time playback state pushed to the UI. Updates every 10
-seconds.
+Overview updates every 10 seconds. Name and server badge are clickable and open the instance in a new browser tab.
 <img width="1900" height="781" alt="image" src="https://github.com/user-attachments/assets/3b383a7f-8bf6-4460-b5e2-ef38302c89b9" />
 
-Name and server badge are clickable and open the instance in a new browser tab.
-
 ### Release calendar (Sonarr/Radarr)
-Unified calendar view of upcoming and recently released content pulled from
-Sonarr and Radarr.
+Unified calendar view of upcoming and recently released content pulled from Sonarr and Radarr.
 
 Items in calendar are clickable and open the instance in a new browser tab.
 <img width="1693" height="869" alt="image" src="https://github.com/user-attachments/assets/52e19db9-8b6d-4cb7-b8c4-ae7e49163493" />
@@ -44,11 +40,6 @@ time from the settings panel. Instances are grouped by service type.
 - Import users directly from an Emby server — avoids manual re-entry
 - Per-user preferences (timezone, display settings)
 - Login history and last-seen tracking per user
-
-### Authentication
-JWT-based auth with short-lived access tokens and longer-lived refresh
-tokens. "Remember me" controls the refresh token lifetime. Tokens are
-blacklisted on logout. Rate limiting is applied to all auth endpoints.
 
 ### Log viewer
 Admin-accessible log viewer built into the settings UI. Logs rotate daily
